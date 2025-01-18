@@ -1,7 +1,5 @@
 package ca.waterloo.dsg.graphflow.util;
 
-import lombok.var;
-
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -27,15 +25,14 @@ public class IOUtils {
         return (System.nanoTime() - beginTime) / 1000000.0;
     }
 
-    /**
-     *
-     *
-     * @param filename
-     * @param output
-     * @throws IOException
-     */
     public static void log(String filename, String output) throws IOException {
-        IOUtils.mkdirForFile(filename);
+        var output_split = filename.split("/");
+        var strBuilder = new StringBuilder();
+        for (int i = 0; i < output_split.length - 1; i++) {
+            strBuilder.append(output_split[i]);
+            strBuilder.append("/");
+        }
+        IOUtils.mkdirs(strBuilder.toString());
         IOUtils.createNewFile(filename);
         var writer = new FileWriter(filename, true /* append to the file */);
         writer.write(output);
@@ -66,71 +63,23 @@ public class IOUtils {
         }
     }
 
-    /**
-     * Creates an {@link ObjectOutputStream} object from the given {@code outputPath}.
-     *
-     * @param outputPath The {@link String} path to the output file.
-     * @return an {@link ObjectOutputStream} object.
-     */
-    public static ObjectOutputStream makeObjectOutputStream(String outputPath)
-        throws IOException {
-        return new ObjectOutputStream(new BufferedOutputStream(new FileOutputStream(outputPath)));
-    }
-
-    /**
-     * Creates an {@link ObjectInputStream} object from the given {@code inputFilePath}.
-     *
-     * @param inputFilePath The {@link String} path to the input file.
-     * @return an {@link ObjectInputStream} object.
-     */
-    public static ObjectInputStream makeObjInputStream(String inputFilePath) throws IOException {
-        return new ObjectInputStream(new BufferedInputStream(new FileInputStream(inputFilePath)));
-    }
-
-    public static void mkdirForFile(String outputFilename) throws IOException {
-        String[] output_split = outputFilename.split("/");
-        StringBuilder outputDirBuilder = new StringBuilder();
-        for (int i = 0; i < output_split.length - 1; i++) {
-            outputDirBuilder.append(output_split[i]);
-            outputDirBuilder.append("/");
-        }
-        IOUtils.mkdirs(outputDirBuilder.toString());
-    }
-
-    /**
-     * @param file
-     * @param object
-     * @throws IOException if stream to file cannot be written to or closed.
-     */
     public static void serializeObj(String file, Object object) throws IOException {
-        var outputStream = IOUtils.makeObjectOutputStream(file);
-        outputStream.writeObject(object);
-        outputStream.close();
+        var stream = new ObjectOutputStream(new BufferedOutputStream(new FileOutputStream(file)));
+        stream.writeObject(object);
+        stream.close();
     }
 
-    /**
-     * @param directory
-     * @param filenameObjectPairs
-     * @throws IOException if stream to file cannot be written to or closed.
-     */
     public static void serializeObjs(String directory, Object[] filenameObjectPairs)
         throws IOException {
-        for (int i = 0; i < filenameObjectPairs.length; i += 2) {
+        for (var i = 0; i < filenameObjectPairs.length; i += 2) {
             serializeObj(directory + filenameObjectPairs[i], filenameObjectPairs[i + 1]);
         }
     }
 
-    /**
-     * @param file
-     * @return
-     * @throws IOException if stream to file cannot be written to or closed.
-     * @throws ClassNotFoundException if the object read from input stream is not found.
-     */
-    public static Object deserializeObj(String file) throws IOException,
-        ClassNotFoundException {
-        var inputStream = IOUtils.makeObjInputStream(file);
-        Object object = inputStream.readObject();
-        inputStream.close();
+    public static Object deserializeObj(String file) throws IOException, ClassNotFoundException {
+        var stream =  new ObjectInputStream(new BufferedInputStream(new FileInputStream(file)));
+        var object = stream.readObject();
+        stream.close();
         return object;
     }
 }

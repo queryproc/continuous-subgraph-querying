@@ -1,7 +1,8 @@
 package ca.waterloo.dsg.graphflow.runner;
 
+import ca.waterloo.dsg.graphflow.runner.dataset.DatasetSerializer;
+import ca.waterloo.dsg.graphflow.runner.plan.QueryPlanSerExecutor;
 import ca.waterloo.dsg.graphflow.util.IOUtils;
-import lombok.var;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.DefaultParser;
@@ -15,7 +16,8 @@ import org.apache.logging.log4j.Logger;
 import java.io.IOException;
 
 /**
- * The base class for shared functionality between Runner classes.
+ * The base class for shared functionality between {@link QueryPlanSerExecutor} and
+ * {@link DatasetSerializer}.
  */
 public abstract class AbstractRunner {
 

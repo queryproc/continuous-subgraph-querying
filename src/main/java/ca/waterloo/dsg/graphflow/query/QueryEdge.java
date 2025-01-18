@@ -1,7 +1,6 @@
 package ca.waterloo.dsg.graphflow.query;
 
-import lombok.Getter;
-import lombok.Setter;
+import ca.waterloo.dsg.graphflow.storage.Graph.Version;
 
 import java.io.Serializable;
 
@@ -10,11 +9,57 @@ import java.io.Serializable;
  */
 public class QueryEdge implements Serializable {
 
-    @Getter private String fromVertex;
-    @Getter private String toVertex;
-    @Getter @Setter private short fromType;
-    @Getter @Setter private short toType;
-    @Getter @Setter private short label;
+    private Version version;
+
+    public Version getVersion() {
+        return version;
+    }
+
+    public void setVersion(Version version) {
+        this.version = version;
+    }
+
+    private String fromVertex;
+
+    public String getFromVertex() {
+        return fromVertex;
+    }
+
+    private String toVertex;
+
+    public String getToVertex() {
+        return toVertex;
+    }
+
+    private short fromType = 0;
+
+    public short getFromType() {
+        return fromType;
+    }
+
+    public void setFromType(short fromType) {
+        this.fromType = fromType;
+    }
+
+    private short toType = 0;
+
+    public short getToType() {
+        return toType;
+    }
+
+    public void setToType(short toType) {
+        this.toType = toType;
+    }
+
+    private short label = 0;
+
+    public short getLabel() {
+        return label;
+    }
+
+    public void setLabel(short label) {
+        this.label = label;
+    }
 
     /**
      * Constructs a {@link QueryEdge} object.
@@ -27,8 +72,7 @@ public class QueryEdge implements Serializable {
      */
     public QueryEdge(String fromVertex, String toVertex, short fromType, short toType,
         short label) {
-        this.fromVertex = fromVertex;
-        this.toVertex = toVertex;
+        this(fromVertex, toVertex);
         this.fromType = fromType;
         this.toType = toType;
         this.label = label;
@@ -37,11 +81,15 @@ public class QueryEdge implements Serializable {
     /**
      * Constructs a {@link QueryEdge} object.
      *
-     * @param fromQVertex is the from query vertex of the query edge.
-     * @param toQVertex is the to query vertex of the query edge.
+     * @param fromVertex is the from query vertex of the query edge.
+     * @param toVertex is the to query vertex of the query edge.
      */
-    public QueryEdge(String fromQVertex, String toQVertex) {
-        this(fromQVertex, toQVertex, (short) 0  /* fromType */, (short) 0 /* toType */,
-            (short) 0 /* label */);
+    public QueryEdge(String fromVertex, String toVertex) {
+        this.fromVertex = fromVertex;
+        this.toVertex = toVertex;
+    }
+
+    public QueryEdge copy() {
+        return new QueryEdge(fromVertex, toVertex, fromType, toType, label);
     }
 }

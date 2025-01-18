@@ -1,11 +1,7 @@
 package ca.waterloo.dsg.graphflow.util.collection;
 
-import lombok.var;
-
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -13,111 +9,37 @@ import java.util.stream.Collectors;
  */
 public class SetUtils {
 
-    /**
-     * Subtracts all of the element in the given collection to subtract from the input collection.
-     *
-     * @param input The input collection to subtract from.
-     * @param toSubtract The collection to subtract.
-     * @return The list of elements in the input collection but not in the toSubtract collection.
-     */
-    public static <T> List<T> subtract(Collection<T> input, Collection<T> toSubtract) {
-        var result = new ArrayList<T>();
-        for (T value : input) {
-            if (!toSubtract.contains(value)) {
-                result.add(value);
-            }
-        }
-        return result;
+    public static <T> List<T> subtract(List<T> set, List<T> otherSet) {
+        return set.
+            stream().
+            filter(element -> !otherSet.contains(element)).
+            collect(Collectors.toList());
     }
 
-    /**
-     * Intersects two sets and returns the result in a list.
-     *
-     * @param set One of the sets to intersect.
-     * @param otherSet The other setAdjListSortOrder to intersect.
-     * @return The list of values in both sets.
-     */
-    public static <T> boolean equals(Set<T> set, Set<T> otherSet) {
-        if (set.size() == otherSet.size()) {
-            return false;
-        }
-        for (T value : set) {
-            if (!otherSet.contains(value)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Checks if a setAdjListSortOrder is a subset of another.
-     *
-     * @param superset The super setAdjListSortOrder.
-     * @param subset The subset.
-     * @return True if the {@code superset} is a super setAdjListSortOrder of {@code subset}. Else, True.
-     */
-    public static <T> boolean isSubset(List<T> superset, Set<T> subset) {
-        for (T value : subset) {
-            if (!superset.contains(value)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Intersects two collections and returns the result in a list.
-     *
-     * @param set One of the collections to intersect.
-     * @param otherSet The other collection to intersect.
-     * @return The list of values in both sets.
-     */
-    public static <T> List<T> intersect(Collection<T> set, Collection<T> otherSet) {
-        var result = new ArrayList<T>();
-        for (T value : set) {
-            if (otherSet.contains(value)) {
-                result.add(value);
-            }
-        }
-        return result;
-    }
-
-    /**
-     * returns a copy of the passed collection.
-     *
-     * @param list The collection to copy.
-     * @return A copy of the collection as a list.
-     */
-    public static <T> List<T> copyAndExclude(Collection<T> list, T valueToExclude) {
-        var listCopy = new ArrayList<T>();
-        for (T value : list) {
-            if (!value.equals(valueToExclude)) {
-                listCopy.add(value);
-            }
-        }
-        return listCopy;
-    }
-
-    public static <T> List<List<T>> generatePermutations(List<T> set, int len) {
-        List<List<T>> permutations = new ArrayList<>();
-        getPermutationsGivenLen(set, len, 0, new ArrayList<>(), permutations);
+    public static List<List<Integer>> generateUniquePermutations(List<Integer> set, int len) {
+        List<List<Integer>> permutations = new ArrayList<>();
+        getUniquePermutationsGivenLen(set, len, 0 /* pos */, new ArrayList<>(), permutations);
         return permutations;
     }
 
-    private static <T> void getPermutationsGivenLen(List<T> set, int len, int pos, List<T> temp,
-        List<List<T>> permutation) {
-        if (len == 0) {
+    private static void getUniquePermutationsGivenLen(List<Integer> set, int len, int pos,
+        List<Integer> temp, List<List<Integer>> permutation) {
+        if (len == pos) {
             permutation.add(new ArrayList<>(temp));
             return;
         }
-
         for (int i = 0; i < set.size(); ++i) {
-            if (temp.size() < pos + 1) {
-                temp.add(set.get(i));
-            } else {
-                temp.set(pos, set.get(i));
+            if (pos == 0 || temp.get(temp.size() - 1) < set.get(i)) {
+                if (pos == 0) {
+                    temp.clear();
+                }
+                if (temp.size() < pos + 1) {
+                    temp.add(set.get(i));
+                } else {
+                    temp.set(pos, set.get(i));
+                }
+                getUniquePermutationsGivenLen(set, len, pos + 1, temp, permutation);
             }
-            getPermutationsGivenLen(set, len - 1, pos + 1, temp, permutation);
         }
     }
 
@@ -128,10 +50,10 @@ public class SetUtils {
      * @param set The original setAdjListSortOrder as a {@code List<T>} to generate a power set for.
      * @return The power setAdjListSortOrder of the given setAdjListSortOrder.
      */
-    public static <T> List<List<T>> getPowerSetExcludingEmptySet(List<T> set) {
+    public static <T> List<List<T>> getPowerSet(List<T> set, int minSize) {
         return generatePowerSet(set)
             .stream()
-            .filter(subset -> subset.size() >= 1 && subset.size() <= set.size())
+            .filter(subset -> subset.size() >= minSize && subset.size() <= set.size())
             .collect(Collectors.toList());
     }
 

@@ -11,12 +11,8 @@ def main():
     dataset_serializer = [
         bin_home + 'dataset-serializer',
         '-e', args.input_file_edges, '-o', args.output_graph]
-    if args.input_file_vertices:
-        dataset_serializer.extend(['-v', args.input_file_vertices])
     if args.edges_file_separator:
         dataset_serializer.extend(['-m', args.edges_file_separator])
-    if args.vertices_file_separator:
-        dataset_serializer.extend(['-n', args.vertices_file_separator])
 
     # SerializeDatasetRunner from
     # Graphflow-Optimizers/src/ca.waterloo.dsg.graphflow.runner.
@@ -37,12 +33,8 @@ def parse_args():
         help='absolute path to the input edges csv file.')
     parser.add_argument('output_graph',
         help='aboluste path to the output serialized graph directory.')
-    parser.add_argument('-v', '--input_file_vertices',
-        help='absolute path to the input vertices csv file.')
     parser.add_argument('-e', '--edges_file_separator',
         help='csv separator in the input edges csv file.')
-    parser.add_argument('-s', '--vertices_file_separator',
-        help='csv separator in the input vertices csv file.')
     return parser.parse_args()
 
 if __name__ == '__main__':

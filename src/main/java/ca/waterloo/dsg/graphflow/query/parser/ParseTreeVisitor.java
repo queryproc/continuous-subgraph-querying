@@ -7,7 +7,6 @@ import ca.waterloo.dsg.graphflow.grammar.GraphflowParser.MatchPatternContext;
 import ca.waterloo.dsg.graphflow.query.QueryEdge;
 import ca.waterloo.dsg.graphflow.query.QueryGraph;
 import ca.waterloo.dsg.graphflow.storage.KeyStore;
-import lombok.var;
 
 /**
  * This class implements the ANTLR4 methods used to traverse the parseAntlr tree and return a
@@ -28,11 +27,7 @@ public class ParseTreeVisitor extends GraphflowBaseVisitor<QueryGraph> {
 
     @Override
     public QueryGraph visitGraphflow(GraphflowContext ctx) {
-        var queryGraph = visitMatchPattern(ctx.matchPattern());
-        if (null != ctx.LIMIT()) {
-            queryGraph.setLimit(Integer.parseInt(ctx.Digits().getText()));
-        }
-        return queryGraph;
+        return visitMatchPattern(ctx.matchPattern());
     }
 
     @Override

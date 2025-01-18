@@ -1,29 +1,18 @@
 package ca.waterloo.dsg.graphflow.plan;
 
 import ca.waterloo.dsg.graphflow.plan.operator.Operator;
-import ca.waterloo.dsg.graphflow.plan.operator.Operator.LimitExceededException;
-import ca.waterloo.dsg.graphflow.plan.operator.hashjoin.Build;
-import ca.waterloo.dsg.graphflow.plan.operator.hashjoin.HashTable;
-import ca.waterloo.dsg.graphflow.plan.operator.hashjoin.Probe;
 import ca.waterloo.dsg.graphflow.plan.operator.scan.Scan;
-import ca.waterloo.dsg.graphflow.plan.operator.scan.ScanSampling;
-import ca.waterloo.dsg.graphflow.plan.operator.sink.Sink;
-import ca.waterloo.dsg.graphflow.plan.operator.sink.Sink.SinkType;
-import ca.waterloo.dsg.graphflow.plan.operator.sink.SinkLimit;
+import ca.waterloo.dsg.graphflow.planner.Catalog.operator.ScanSampling;
+import ca.waterloo.dsg.graphflow.planner.Catalog.Catalog;
 import ca.waterloo.dsg.graphflow.storage.Graph;
 import ca.waterloo.dsg.graphflow.storage.KeyStore;
-import ca.waterloo.dsg.graphflow.util.IOUtils;
-import ca.waterloo.dsg.graphflow.util.container.Triple;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.var;
+import ca.waterloo.dsg.graphflow.util.container.Pair;
 
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.StringJoiner;
 
 /**
  * Query Plan (QP) representing left-deep binary plans, bushy binary plans, worst-case optimal
@@ -31,108 +20,50 @@ import java.util.StringJoiner;
  */
 public class Plan implements Serializable {
 
-    @Getter private Sink sink;
-    @Setter public SinkType sinkType = SinkType.COUNTER;
-    @Getter public ScanSampling scanSampling;
-    @Getter private Operator lastOperator;
-    @Setter public int outTuplesLimit;
+    public Scan scan;
+    public Operator lastOperator;
+    public List<Operator> lastOperators;
 
-    @Getter private double elapsedTime = 0;
-    @Getter private long icost = 0;
-    @Getter private long numIntermediateTuples = 0;
-    @Getter private long numOutTuples = 0;
-    @Getter transient private List<Triple<String /* name */,
-        Long /* i-cost */, Long /* number output tuples */>> operatorMetrics = new ArrayList<>();
-
-    private boolean executed = false;
-    @Getter private boolean adaptiveEnabled = false;
-
-    @Getter List<Operator> subplans = new ArrayList<>();
-    private List<Probe> probes;
-
-    @Getter @Setter double estimatedICost;
-    @Getter @Setter double estimatedNumOutTuples;
-    @Getter @Setter Map<String/*qVertex*/, Double/*estimatedNumOutTuples*/> qVertexToNumOutTuples;
-
-    /**
-     * Constructs a {@link Plan} object.
-     */
-    public Plan(ScanSampling scan) {
-        this.scanSampling = scan;
-        var lastOperators = new ArrayList<Operator>();
-        scan.getLastOperators(lastOperators);
-        var outSubgraph = lastOperators.get(0).getOutSubgraph();
-        sink = new Sink(outSubgraph);
-        sink.previous = lastOperators.toArray(new Operator[0]);
-        for (var lastOperator : lastOperators) {
-            lastOperator.setNext(sink);
-        }
+    public Scan getScan() {
+        return scan;
     }
 
-    /**
-     * Constructs a {@link Plan} object.
-     *
-     * @param lastOperator is the operator to execute.
-     */
-    public Plan(Operator lastOperator) {
-        this.subplans.add(lastOperator);
+    public Operator getLastOperator() {
+        return lastOperator;
+    }
+
+    public List<Operator> getLastOperators() {
+        return lastOperators;
+    }
+
+    private long icost = -1;
+
+
+    private long numOutTuples = -1;
+    private long numIntermediateTuples = -1;
+
+    private double expectedICost = 0.0;
+
+    public double getExpectedICost() {
+        return expectedICost;
+    }
+
+    Plan(Scan scan, Operator lastOperator) {
+        this.scan = scan;
         this.lastOperator = lastOperator;
-    }
-
-    /**
-     * Constructs a {@link Plan} object.
-     *
-     * @param subplans are the setAdjListSortOrder of linear subplans making up the query plan.
-     */
-    public Plan(List<Operator> subplans) {
-        this.subplans = subplans;
-        this.lastOperator = subplans.get(subplans.size() - 1);
-    }
-
-    /**
-     * Constructs a {@link Plan} object.
-     *
-     * @param lastOperator is the scan operator to execute.
-     * @param estimatedNumOutTuples is the number of output tuples from the scan.
-     */
-    public Plan(Scan lastOperator, double estimatedNumOutTuples) {
-        this(lastOperator);
-        this.estimatedNumOutTuples = estimatedNumOutTuples;
-        qVertexToNumOutTuples = new HashMap<>();
-        qVertexToNumOutTuples.put(lastOperator.getFromQueryVertex(), estimatedNumOutTuples);
-        qVertexToNumOutTuples.put(lastOperator.getToQueryVertex(), estimatedNumOutTuples);
-    }
-
-    public void append(Operator newOperator) {
-        lastOperator.setNext(newOperator);
-        newOperator.setPrev(lastOperator);
-        subplans.set(subplans.size() - 1, newOperator);
-        lastOperator = newOperator;
+        this.lastOperators = new ArrayList<>();
+        this.lastOperators.add(lastOperator);
     }
 
     /**
      * Executes the {@link Plan}.
      */
-    public void execute() {
-        if (SinkType.LIMIT != sinkType) {
-            var startTime = System.nanoTime();
-            try {
-                for (var subplan : subplans) {
-                    subplan.execute();
-                }
-            } catch (LimitExceededException e) {} // never thrown.
-            elapsedTime = IOUtils.getElapsedTimeInMillis(startTime);
-        } else {
-            ((SinkLimit) sink).setStartTime(System.nanoTime());
-            try {
-                for (var subplan : subplans) {
-                    subplan.execute();
-                }
-            } catch (LimitExceededException e) {} // never thrown.
-            elapsedTime = ((SinkLimit) sink).getElapsedTime();
-        }
-        executed = true;
-        numOutTuples = sink.getNumOutTuples();
+    void execute() {
+        scan.execute();
+    }
+
+    void resetCache() {
+        scan.resetCache();
     }
 
     /**
@@ -142,144 +73,121 @@ public class Plan implements Serializable {
      * @param store is the labels and types key store.
      */
     public void init(Graph graph, KeyStore store) {
-        var lastOperator = subplans.get(subplans.size() - 1);
-        var queryGraph = lastOperator.getOutSubgraph();
-        switch(sinkType) {
-            case LIMIT:
-                sink = new SinkLimit(queryGraph, outTuplesLimit);
+        scan.setLevelRecursively(0 /* first level */);
+        var largestTupleLen = 2;
+        for (var lastOperator : lastOperators) {
+            var numVertices = lastOperator.getOutSubgraph().getNumVertices();
+            if (numVertices > largestTupleLen) {
+                largestTupleLen = numVertices;
+            }
+        }
+        var tuple = new int[largestTupleLen];
+        scan.init(tuple, graph, store);
+    }
+
+    public void addALDSharing(Catalog catalog) {
+        scan.shareALDsIfPossible(catalog, this /* plan */);
+        lastOperators = new ArrayList<>();
+        if (null != scan.getNext()) {
+            for (var nextOperator : scan.getNext()) {
+                nextOperator.addLastOperators(lastOperators);
+            }
+        }
+    }
+
+    public void reduceICost(double expectedIcostRemoved) {
+        expectedICost -= expectedIcostRemoved;
+    }
+
+    public void setExpectedICost(double expectedICost) {
+        this.expectedICost += expectedICost;
+    }
+
+    public void setExpectedICost() {
+        expectedICost = scan.getExpectedTotalICost();
+    }
+
+    public void setEstimatedICostAndSelectivity(Catalog catalog) {
+        var fromPosToNumOutTuples = new HashMap<Integer, Double>();
+        fromPosToNumOutTuples.put(0 /* from */, (double) Graph.EDGE_BATCH_SIZE);
+        fromPosToNumOutTuples.put(1 /* to   */, (double) Graph.EDGE_BATCH_SIZE);
+        for (var nextOperator : scan.getNext()) {
+            nextOperator.setEstimatedICostAndSelectivity(catalog, fromPosToNumOutTuples);
+        }
+    }
+
+    public void addLastOperator(Operator anotherLastOperator) {
+        lastOperators.add(anotherLastOperator);
+    }
+
+    long getNumIntermediateTuples() {
+        if (numIntermediateTuples == -1) {
+            numIntermediateTuples = scan.getNumIntermediateTuples();
+        }
+        return numIntermediateTuples;
+    }
+
+    long getICost() {
+        if (icost == -1) {
+            icost = scan.getTotalICost();
+        }
+        return icost;
+    }
+
+    long getNumOutTuples() {
+        if (numOutTuples == -1) {
+            numOutTuples = 0;
+            lastOperators.forEach(op ->
+                numOutTuples += op.getNumTimesAsFinalOperator() * op.getNumOutTuples());
+        }
+        return numOutTuples;
+    }
+
+    int getNumOperators() {
+        return scan.getNumOperators();
+    }
+
+    void getLevelToICostMap(Map<Integer, Long> levelToICostMap) {
+        scan.getLevelToICostMap(levelToICostMap);
+    }
+
+    public Pair<Operator, Operator /* to share */> findOperatorToShare(Plan plan,
+        boolean startAtLastOperator) {
+        var operator = startAtLastOperator ? plan.lastOperator : plan.lastOperator.getPrev();
+        Operator operatorToShare = null;
+        while (operator != null) {
+            operatorToShare = scan.findOperatorToShare(operator.getOutSubgraph());
+            if (null != operatorToShare) {
                 break;
-            case COUNTER:
-            default:
-                sink = new Sink(queryGraph);
-                break;
-        }
-        sink.setPrev(lastOperator);
-        lastOperator.setNext(sink);
-        probes = new ArrayList<>();
-        for (int i = 1; i < subplans.size(); i++) {
-            var operator = subplans.get(i);
-            if (operator instanceof Probe) {
-                probes.add((Probe) operator);
             }
-            while (null != operator.getPrev()) {
-                operator = operator.getPrev();
-                if (operator instanceof Probe) {
-                    probes.add((Probe) operator);
-                }
-            }
+            operator = operator.getPrev();
         }
-        for (int i = 0; i < subplans.size() - 1; i++) {
-            var build = (Build) subplans.get(i);
-            var hashTable = new HashTable(build.getBuildHashIdx(), build.getHashedTupleLen());
-            build.setHashTable(hashTable);
-        }
-        for (var subplan : subplans) {
-            var probeTuple = new int[subplan.getOutTupleLen()];
-            var firstOperator = subplan;
-            while (null != firstOperator.getPrev()) {
-                firstOperator = firstOperator.getPrev();
-            }
-            firstOperator.init(probeTuple, graph, store);
-        }
+        return new Pair<>(operator, operatorToShare);
     }
 
-    void setProbeHashTables(int ID, HashTable[] hashTables) {
-        for (var probe : probes) {
-            if (probe.getID() == ID) {
-                probe.setHashTables(hashTables);
-            }
+    void setScansToSample(Graph graph) {
+        var label = scan.getOutSubgraph().getEdges().get(0).getLabel();
+        var edges = graph.getFlatEdges(label);
+        var scanSampling = new ScanSampling(scan.getOutSubgraph());
+        scanSampling.setEdgeIndicesToSample(edges);
+        scanSampling.setNext(scan.getNext());
+        for (var nextOperator : scan.getNext()) {
+            nextOperator.setPrev(scanSampling);
         }
+        scan = scanSampling;
     }
 
-    /**
-     * @return The stats as a one line comma separated CSV  one line row for logging.
-     */
-    public String getOutputLog() {
-        if (null == operatorMetrics) {
-            operatorMetrics = new ArrayList<>();
-        }
-        setStats();
-        var strJoiner = new StringJoiner(",");
-        if (executed) {
-            strJoiner.add(String.format("%.4f", elapsedTime));
-            strJoiner.add(String.format("%d", numOutTuples));
-            strJoiner.add(String.format("%d", numIntermediateTuples));
-            strJoiner.add(String.format("%d", icost));
-        }
-        for (var operatorMetric : operatorMetrics) {
-            strJoiner.add(String.format("%s", operatorMetric.a));     /* operator name */
-            /*
-            if (executed) {
-                if (!operatorMetric.a.contains("PROBE") && !operatorMetric.a.contains("HASH") &&
-                        !operatorMetric.a.contains("SCAN")) {
-                    strJoiner.add(String.format("%d", operatorMetric.b)); /* i-cost *
-                }
-                if (!operatorMetric.a.contains("HASH")) {
-                    strJoiner.add(String.format("%d", operatorMetric.c)); /* num out tuples *
-                }
-            }
-            */
-        }
-        return strJoiner.toString() + "\n";
-    }
-
-    void setStats() {
-        for (var subplan : subplans) {
-            var firstOperator = subplan;
-            while (null != firstOperator.getPrev()) {
-                firstOperator = firstOperator.getPrev();
-            }
-            firstOperator.getOperatorMetricsNextOperators(operatorMetrics);
-        }
-        for (var i = 0; i < operatorMetrics.size() - 1; ++i) {
-            icost += operatorMetrics.get(i).b;
-            numIntermediateTuples += operatorMetrics.get(i).c;
-        }
-        icost += operatorMetrics.get(operatorMetrics.size() - 1).b;
-    }
-
-    /**
-     * Checks if the two plans are equivalent.
-     *
-     * @param otherQueryPlan is the other query plan to compare against.
-     * @return True, if the two plans are equivalent. False, otherwise.
-     */
-    public boolean isSameAs(Plan otherQueryPlan) {
-        if (subplans.size() != otherQueryPlan.subplans.size()) {
-            return false;
-        }
-        for (var i = 0; i < subplans.size(); i++) {
-            if (!subplans.get(i).isSameAs(otherQueryPlan.subplans.get(i))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Shallow copy of the query plan.
-     */
-    public Plan shallowCopy() {
-        return new Plan(new ArrayList<>(this.subplans));
-    }
-
-    /**
-     * Deep copy of the query plan.
-     *
-     * @param isThreadSafe specifies whether scans and hash joins are thread safe or not.
-     */
-    public Plan copy(boolean isThreadSafe) {
-        var subplans = new ArrayList<Operator>(this.subplans.size());
-        for (var subplan : this.subplans) {
-            subplans.add(subplan.copy(isThreadSafe));
-        }
-        return new Plan(subplans);
-    }
-
-    /**
-     * Deep copy of the query plan.
-     */
     public Plan copy() {
-        return copy(false);
+        var scanCopy = scan.copy();
+        Operator lastOperatorCopy = scanCopy;
+        while (true) {
+            if (null == lastOperatorCopy.getNextOperator()) {
+                break;
+            }
+            lastOperatorCopy = lastOperatorCopy.getNextOperator();
+        }
+        var plan = new Plan(scanCopy, lastOperatorCopy);
+        plan.expectedICost = expectedICost;
+        return plan;
     }
 }

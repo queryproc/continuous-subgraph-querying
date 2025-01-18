@@ -1,189 +1,444 @@
 package ca.waterloo.dsg.graphflow.plan.operator;
 
-import ca.waterloo.dsg.graphflow.plan.operator.sink.Sink;
+import ca.waterloo.dsg.graphflow.plan.Plan;
+import ca.waterloo.dsg.graphflow.plan.operator.extend.EI.AdjListSlice;
+import ca.waterloo.dsg.graphflow.plan.operator.extend.EISharingUtils;
+import ca.waterloo.dsg.graphflow.planner.Catalog.Catalog;
 import ca.waterloo.dsg.graphflow.query.QueryGraph;
 import ca.waterloo.dsg.graphflow.storage.Graph;
 import ca.waterloo.dsg.graphflow.storage.KeyStore;
-import ca.waterloo.dsg.graphflow.util.container.Triple;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.var;
 
 import java.io.Serializable;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Base class for all database operators.
  */
 public abstract class Operator implements Serializable {
 
-    protected final boolean IS_PROFILED = false;
-
-    /**
-     * Limit exception thrown for LIMIT queries.
-     */
-    public class LimitExceededException extends Exception {}
-
     public static boolean CACHING_ENABLED = true;
 
-    @Getter protected String name;
-    @Getter protected Operator[] next;
-    @Getter @Setter protected Operator prev;
+    protected String name;
 
-    @Setter protected int[] probeTuple;
+    public String getName() {
+        return name;
+    }
+    protected Operator[] next;
 
-    @Getter protected int outTupleLen;
-    @Getter protected QueryGraph inSubgraph;
-    @Getter @Setter protected QueryGraph outSubgraph;
-    @Getter @Setter protected Map<String, Integer> outQVertexToIdxMap;
-    @Getter @Setter protected int lastRepeatedVertexIdx;
+    public Operator[] getNext() {
+        return next;
+    }
 
-    @Getter protected long numOutTuples = 0;
-    @Getter protected long icost = 0;
+    protected Operator[] EIRemaining;
+
+    public Operator[] getEIRemaining() {
+        return EIRemaining;
+    }
+
+    protected Operator prev;
+
+    public Operator getPrev() {
+        return prev;
+    }
+
+    public void setPrev(Operator prev) {
+        this.prev = prev;
+    }
+
+    private int level;
+
+    protected int[] tuple;
+
+    public void setTuple(int[] tuple) {
+        this.tuple = tuple;
+    }
+
+    protected QueryGraph outSubgraph;
+
+    public QueryGraph getOutSubgraph() {
+        return outSubgraph;
+    }
+
+    public void setOutSubgraph(QueryGraph outSubgraph) {
+        this.outSubgraph = outSubgraph;
+    }
+
+    protected QueryGraph inSubgraph;
+
+    public QueryGraph getInSubgraph() {
+        return inSubgraph;
+    }
+
+    public void setInSubgraph(QueryGraph inSubgraph) {
+        this.inSubgraph = inSubgraph;
+    }
+
+    protected Map<String, Integer> vertexToIdxMap;
+
+    public Map<String, Integer> getVertexToIdxMap() {
+        return vertexToIdxMap;
+    }
+
+    protected int lastRepeatedVertexIdx;
+
+    public int getLastRepeatedVertexIdx() {
+        return lastRepeatedVertexIdx;
+    }
+
+    public void setLastRepeatedVertexIdx(int lastRepeatedVertexIdx) {
+        this.lastRepeatedVertexIdx = lastRepeatedVertexIdx;
+    }
+
+    protected int outTupleLen;
+
+    public int getOutTupleLen() {
+        return outTupleLen;
+    }
+
+    protected long ICost = 0;
+
+    public long getICost() {
+        return ICost;
+    }
+
+    protected long numOutTuples = 0;
+
+    public long getNumOutTuples() {
+        return numOutTuples;
+    }
+
+    protected double expectedICost = 0;
+
+    public double getExpectedICost() {
+        return expectedICost;
+    }
+
+    protected double expectedNumOutTuples = Graph.EDGE_BATCH_SIZE;
+
+    public double getExpectedNumOutTuples() {
+        return expectedNumOutTuples;
+    }
+
+    protected int numTimesAsFinalOperator;
+
+    public int getNumTimesAsFinalOperator() {
+        return numTimesAsFinalOperator;
+    }
+
+    public void setNumTimesAsFinalOperator(int numTimesAsFinalOperator) {
+        this.numTimesAsFinalOperator = numTimesAsFinalOperator;
+    }
 
     /**
      * Constructs an {@link Operator} object.
      *
      * @param outSubgraph The subgraph matched by the output tuples.
-     * @param inSubgraph The subgraph matched by the input tuples.
+     * @param inSubgraph The subgraph matched by the output tuples.
      */
     protected Operator(QueryGraph outSubgraph, QueryGraph inSubgraph) {
         this.outSubgraph = outSubgraph;
         this.inSubgraph = inSubgraph;
         this.outTupleLen = outSubgraph.getNumVertices();
+        this.lastRepeatedVertexIdx = null == inSubgraph ? 0 /* scan */ : outTupleLen - 2;
     }
-
-    public Set<String> getOutQVertices() {
-        return outQVertexToIdxMap.keySet();
-    }
-
-    /**
-     * Constructs an {@link Operator} object.
-     */
-    protected Operator() {}
 
     /**
      * Initialize the operator e.g. memory allocation.
      *
-     * @param probeTuple is the tuple processed throughout the query plan.
+     * @param tuple is the tuple processed throughout the query plan.
      * @param graph is the input data graph.
      * @param store is the labels and types key store.
      */
-    public abstract void init(int[] probeTuple, Graph graph, KeyStore store);
-
-    /**
-     * Checks if the two plans, the one with this operator as root and the one with root
-     * as passed operator are the same plans. The function relies in its checks on a set of
-     * invariants across the code base for each operator.
-     *
-     * @param operator The other operator to compare against.
-     * @return True, if the plans with these operators as root are the same. False, otherwise.
-     */
-    public boolean isSameAs(Operator operator) {
+    public void init(int[] tuple, Graph graph, KeyStore store) {
         throw new UnsupportedOperationException();
     }
 
     /**
-     * @param index The index of the next operator to return.
-     * @return The {@link Operator} at the given index.
+     * Process a new tuple and push the produced tuples to the next operator.
      */
-    public Operator getNext(int index) {
-        return next[index];
+    public void processNewTuple() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Process a new tuple based on a partial intersect and push the produced tuples to the next
+     * operator.
+     */
+    public void processNewTuple(int[] neighbourIds, AdjListSlice slice) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Executes the operator.
+     */
+    public void execute() {
+        throw new UnsupportedOperationException();
+    }
+
+    public Operator getNextOperator() {
+        if (null == next) {
+            return null;
+        }
+        return next[0];
+    }
+
+    public void resetCache() {
+        if (null != next) {
+            for (var nextOperator : next) {
+                nextOperator.resetCache();
+            }
+        }
+        if (null != EIRemaining) {
+            for (var nextOperator : EIRemaining) {
+                nextOperator.resetCache();
+            }
+        }
+    }
+
+    public long getTotalICost() {
+        var iCostSum = ICost;
+        if (null != next) {
+            for (var nextOperator : next) {
+                iCostSum += nextOperator.getTotalICost();
+            }
+        }
+        return iCostSum;
+    }
+
+    public double getExpectedTotalICost() {
+        var iCostSum = expectedICost;
+        if (null != next) {
+            for (var nextOperator : next) {
+                iCostSum += nextOperator.getExpectedTotalICost();
+            }
+        }
+        return iCostSum;
+    }
+
+    public double getExpectedTotalICost(Catalog catalog, Map<Integer, Double> idxToNumOutTuples) {
+        var iCostSum = 0.0;
+        if (null != next) {
+            for (var nextOperator : next) {
+                iCostSum += nextOperator.getExpectedTotalICost();
+            }
+        }
+        return iCostSum;
+    }
+
+    public long getNumIntermediateTuples() {
+        var numIntermediateResults = 0L;
+        if (numTimesAsFinalOperator == 0 /* not final operator */ ||
+                (null != next && null != EIRemaining)) {
+            numIntermediateResults += numOutTuples;
+        }
+        if (null != next) {
+            for (var nextOperator : next) {
+                numIntermediateResults += nextOperator.getNumIntermediateTuples();
+            }
+        }
+        if (null != EIRemaining) {
+            for (var nextOperator : EIRemaining) {
+                if (null != nextOperator.next) {
+                    for (var nextNextOperator : nextOperator.next) {
+                        numIntermediateResults += nextNextOperator.getNumIntermediateTuples();
+                    }
+                }
+            }
+        }
+        return numIntermediateResults;
+    }
+
+    public int getNumOperators() {
+        return 1 /* this */ +
+            (null == next ? 0 : Arrays.stream(next)
+                                      .map(Operator::getNumOperators)
+                                      .reduce(0, Integer::sum)) +
+            (null == EIRemaining ? 0 : Arrays.stream(EIRemaining)
+                                             .map(Operator::getNumOperators)
+                                             .reduce(0, Integer::sum));
     }
 
     /**
      * @param operator The next operator to append prefixes to.
      */
     public void setNext(Operator operator) {
-        next = new Operator[] { operator };
+        next = new Operator[]{ operator };
+        operator.setPrev(this);
     }
 
     /**
-     * @param operators The next operator to append prefixes to.
+     * @param next The next operators to append prefixes to.
      */
-    public void setNext(Operator[] operators) {
-        next = operators;
-    }
-
-    /**
-     * Process a new tuple and push the produced tuples to the next operator.
-     */
-    public abstract void processNewTuple() throws LimitExceededException;
-
-    /**
-     * Executes the operator.
-     */
-     public void execute() throws LimitExceededException {
-        if (null != prev) {
-            prev.execute();
-        }
-    }
-
-    public String getALDsAsString() {
-        return "";
-    }
-
-    public void updateOperatorName(Map<String, Integer> queryVertexToIndexMap) {
-        throw new UnsupportedOperationException(this.getClass().getSimpleName() +
-            " does not support updateOperatorName(Map<String, Integer> queryVertexToIndexMap).");
-    }
-
-    /**
-     * Fills the operator metrics and recursively calls its prev operators to do the same.
-     *
-     * @param operatorMetrics The List of triple {@code String} operator name, {@code Long}
-     * intersection cost, and {@code Long} probeTuple output size.
-     */
-    public void getOperatorMetricsNextOperators(List<Triple<String, Long, Long>> operatorMetrics) {
-        operatorMetrics.add(new Triple<>(name, icost, numOutTuples));
+    public void setNext(Operator[] next) {
+        this.next = next;
         if (null != next) {
-            for (Operator nextOperator : next) {
-                if (!(nextOperator instanceof Sink)) {
-                    nextOperator.getOperatorMetricsNextOperators(operatorMetrics);
-                }
-            }
-        }
-    }
-
-    public void getLastOperators(List<Operator> lastOperators) {
-        if (next != null) {
             for (var nextOperator : next) {
-                nextOperator.getLastOperators(lastOperators);
+                nextOperator.setPrev(this);
             }
-        } else {
-            lastOperators.add(this);
         }
     }
 
     /**
-     * @return The number of intersect operators before and including this operator in the query
-     * transform.
+     * @param next The next operators to append prefixes to.
      */
-    public boolean hasMultiEdgeExtends() {
-        if (null != prev) {
-            return prev.hasMultiEdgeExtends();
+    public void setEIRemaining(Operator[] next) {
+        this.EIRemaining = next;
+        if (null != next) {
+            for (var nextOperator : next) {
+                nextOperator.setPrev(this);
+            }
         }
-        return false;
+    }
+
+    public void setVertexToIdxMap(Map<String, Integer> vertexToIdxMap) {
+        this.vertexToIdxMap = vertexToIdxMap;
+        if (null != next) {
+            for (var operatorNext : next) {
+                operatorNext.setVertexToIdxMap(vertexToIdxMap);
+            }
+        }
+    }
+
+    public void setALDsFromPos(Map<String, Integer> vertexToIdxMap) {
+        if (null != next) {
+            for (var operatorNext : next) {
+                operatorNext.setALDsFromPos(vertexToIdxMap);
+            }
+        }
+    }
+
+    public void shareALDsIfPossible(Catalog catalog, Plan plan) {
+        if (null != next) {
+            if (next.length > 1) {
+                shareALDsPartiallyIfPossible(catalog, plan);
+            }
+            for (var nextOperator : next) {
+                nextOperator.shareALDsIfPossible(catalog, plan);
+            }
+        }
+    }
+
+    private void shareALDsPartiallyIfPossible(Catalog catalog, Plan plan) {
+        var newNextAndICostReduction = EISharingUtils.GetNewNextGivenBestALDsToShare(next, catalog);
+        if (null == newNextAndICostReduction.a) { // no ALDs to share.
+            return;
+        }
+        plan.reduceICost(newNextAndICostReduction.b /* expectedIcostRemoved */);
+        this.setNext(newNextAndICostReduction.a);
+        // if more than 1 EI operator, continue finding ALD sharing opportunities if any.
+        if (next.length > 1) {
+            this.shareALDsPartiallyIfPossible(catalog, plan);
+        }
+    }
+
+    public void setLevelRecursively(int level) {
+        this.level = level;
+        if (null != next) {
+            var nextLevel = level + 1;
+            for (var nextOperator : next) {
+                nextOperator.setLevelRecursively(nextLevel);
+            }
+        }
+        if (null != EIRemaining) {
+            for (var nextOperator : EIRemaining) {
+                nextOperator.setLevelRecursively(level);
+            }
+        }
+    }
+
+    public void getLevelToICostMap(Map<Integer, Long> levelToICostMap) {
+        levelToICostMap.putIfAbsent(level, 0L);
+        levelToICostMap.put(level, levelToICostMap.get(level) + ICost);
+        if (null != next) {
+            for (var nextOperator : next) {
+                nextOperator.getLevelToICostMap(levelToICostMap);
+            }
+        }
     }
 
     /**
-     * Creates a copy of the operator and same recursively of the prev operators referenced
-     * for single or multi-threaded execution.
-     *
-     * @param isThreadSafe specifies whether to copy each operator as blocking operator or not.
-     * @return The copy of the operator.
+     * @param operator The shared operator to append prefixes to.
      */
-    public Operator copy(boolean isThreadSafe) {
+    public void addNext(Operator operator, Plan plan) {
+        var nextOperator = operator.getNextOperator();
+        if (null == nextOperator) {
+            numTimesAsFinalOperator++;
+            if (!plan.getLastOperators().contains(this)) {
+                plan.getLastOperators().add(this);
+            }
+            return;
+        }
+        nextOperator.setPrev(this);
+        var newNext = new Operator[(next != null ? next.length : 0) + 1];
+        if (next != null) {
+            System.arraycopy(next, 0, newNext, 0, next.length);
+        }
+        newNext[next != null ? next.length : 0] = nextOperator;
+        next = newNext;
+        Operator lastOperator;
+        do {
+            lastOperator = nextOperator;
+            nextOperator = nextOperator.getNextOperator();
+        } while (null != nextOperator);
+        plan.addLastOperator(lastOperator);
+        var vertexMapping = outSubgraph.getIsomorphicMappingIfAny(operator.getOutSubgraph());
+        var newVertexToIdxMap = updateVertexToIdxMap(vertexMapping, vertexToIdxMap);
+        operator.getNextOperator().setALDsFromPos(newVertexToIdxMap);
+        operator.getNextOperator().setVertexToIdxMap(newVertexToIdxMap);
+    }
+
+    private Map<String, Integer> updateVertexToIdxMap(Map<String, String> vertexMapping,
+        Map<String, Integer> vertexToIdxMap) {
+        var newVertexToIdxMap = new HashMap<String, Integer>();
+        for (var vertex : vertexMapping.keySet()) {
+            var mappedVertex = vertexMapping.get(vertex);
+            var idx = vertexToIdxMap.get(vertex);
+            newVertexToIdxMap.put(mappedVertex, idx);
+        }
+        return newVertexToIdxMap;
+    }
+
+    public void setEstimatedICostAndSelectivity(Catalog catalog,
+        Map<Integer, Double> fromPosToNumOutTuples) {
         throw new UnsupportedOperationException();
     }
 
-    /**
-     * Creates a copy of the operator and same recursively of the prev operators referenced
-     * for single-threaded execution.
-     */
+    public void addStatsToCatalog(Catalog catalog) {
+        if (null != next) {
+            for (var nextOperator : next) {
+                nextOperator.addStatsToCatalog(catalog);
+            }
+        }
+    }
+
+    public void setIdxToNumOutTuples(Map<Integer, Double> idxToNumOutTuples, Catalog catalog) {
+        throw new IllegalArgumentException();
+    }
+
+    public Operator findOperatorToShare(QueryGraph outSubgraph) {
+        if (outSubgraph.isIsomorphicTo(this.outSubgraph)) {
+            return this;
+        } else {
+            if (null != next) {
+                for (var nextOperator : next) {
+                    var operatorToShare = nextOperator.findOperatorToShare(outSubgraph);
+                    if (null != operatorToShare) {
+                        return operatorToShare;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    public void addLastOperators(List<Operator> lastOperators) {
+        throw new UnsupportedOperationException();
+    }
+
     public Operator copy() {
-        return copy(false);
+        throw new UnsupportedOperationException();
     }
 }

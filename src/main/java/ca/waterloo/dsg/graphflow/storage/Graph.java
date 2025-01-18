@@ -1,9 +1,6 @@
 package ca.waterloo.dsg.graphflow.storage;
 
 import ca.waterloo.dsg.graphflow.util.IOUtils;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.var;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -22,33 +19,113 @@ public class Graph {
      * Used to identify the edge direction in the graph representation.
      */
     public enum Direction {
-        Fwd /* forward  */,
-        Bwd /* backward */
+        FWD /* forward  */,
+        BWD /* backward */
     }
 
-    // vertex Ids indexed by type and random access to vertex types.
-    @Getter @Setter private int[] vertexIds;
-    @Getter @Setter private short[] vertexTypes;
-    @Getter @Setter private int[] vertexTypeOffsets;
+    /**
+     * Used to represent different versions of the graph.
+     */
+    public enum Version {
+        OLD,
+        NEW,
+        DELTA
+    }
+
     // Adjacency lists containing the neighbour vertex IDs sorted by ID.
-    @Getter @Setter private SortedAdjList[] fwdAdjLists;
-    @Getter @Setter private SortedAdjList[] bwdAdjLists;
+    private AdjacencyList[] fwdAdjLists;
+    private AdjacencyList[] bwdAdjLists;
     // Graph metadata.
-    @Getter @Setter private int highestVertexId = -1;
-    @Getter @Setter private int numEdges;
-    @Setter private int[] labelOrToTypeToNumEdges;
-    @Setter private int[] labelOrTypeToLargestFwdAdjListSize;
-    @Setter private int[] labelOrTypeToLargestBwdAdjListSize;
-    @Getter @Setter private Map<Long, Integer> edgeKeyToNumEdgesMap;
-    @Getter @Setter private Map<Integer, Integer> labelAndToTypeToPercentageMap;
-    @Getter @Setter private Map<Integer, Integer> fromTypeAndLabelToPercentageMap;
-    @Getter @Setter private boolean isUndirected;
-    @Getter @Setter private boolean isAdjListSortedByType;
+    private int numEdges = 0;
+    private int[] numEdgesPerLabel;
+    private int highestVertexId = -1;
+    private int largestFwdAdjListSize;
+    private int largestBwdAdjListSize;
+    private int[] labelToLargestFwdAdjListSize;
+    private int[] labelToLargestBwdAdjListSize;
+
+    // delta and new edges.
+    private int[][] deltaEdges;
+    private int[] deltaSizes;
+    private int fwdPoolIdx;
+    private int bwdPoolIdx;
+    private AdjacencyList[] fwdAdjListsPool;
+    private AdjacencyList[] bwdAdjListsPool;
+    private Map<Integer /* fromVertex ID */, AdjacencyList> newFwdAdjLists;
+    private Map<Integer /* toVertex   ID */, AdjacencyList> newBwdAdjLists;
+    private int numLabels;
+
+    public static final int EDGE_BATCH_SIZE = 5;
+
+    public void setFwdAdjLists(AdjacencyList[] fwdAdjLists) {
+        this.fwdAdjLists = fwdAdjLists;
+    }
+
+    public void setBwdAdjLists(AdjacencyList[] bwdAdjLists) {
+        this.bwdAdjLists = bwdAdjLists;
+    }
+
+    public int[] getDeltaSizes() {
+        return deltaSizes;
+    }
+
+    public int[][] getDeltaEdges() {
+        return deltaEdges;
+    }
+
+    public void setNumEdges(int numEdges) {
+        this.numEdges = numEdges;
+    }
+
+    public void setNumEdgesPerLabel(int[] numEdgesPerLabel) {
+        this.numEdgesPerLabel = numEdgesPerLabel;
+    }
+
+    public void setLargestFwdAdjListSize(int largestFwdAdjListSize) {
+        this.largestFwdAdjListSize = largestFwdAdjListSize;
+    }
+
+    public void setLargestBwdAdjListSize(int largestBwdAdjListSize) {
+        this.largestBwdAdjListSize = largestBwdAdjListSize;
+    }
+
+    public void setLabelToLargestFwdAdjListSize(int[] labelToLargestFwdAdjListSize) {
+        this.labelToLargestFwdAdjListSize = labelToLargestFwdAdjListSize;
+    }
+
+    public void setLabelToLargestBwdAdjListSize(int[] labelToLargestBwdAdjListSize) {
+        this.labelToLargestBwdAdjListSize = labelToLargestBwdAdjListSize;
+    }
+
+    public int getHighestVertexId() {
+        return highestVertexId;
+    }
+
+    public void setHighestVertexId(int highestVertexId) {
+        this.highestVertexId = highestVertexId;
+    }
 
     /**
      * Constructs a {@link Graph} object.
+     *
+     * @param numLabels is the total number of labels in the graph.
      */
-     public Graph() {}
+    public Graph(int numLabels) {
+        this.deltaEdges = new int[numLabels][EDGE_BATCH_SIZE * 2];
+        this.deltaSizes = new int[numLabels];
+        this.newFwdAdjLists = new HashMap<>(EDGE_BATCH_SIZE);
+        this.newBwdAdjLists = new HashMap<>(EDGE_BATCH_SIZE);
+        this.fwdAdjListsPool = new AdjacencyList[EDGE_BATCH_SIZE];
+        this.bwdAdjListsPool = new AdjacencyList[EDGE_BATCH_SIZE];
+        this.numLabels = numLabels;
+    }
+
+    public void initAdjListsPool() {
+        for (var i = 0; i < EDGE_BATCH_SIZE; i++) {
+            this.fwdAdjListsPool[i] = new AdjacencyList(numLabels, largestFwdAdjListSize);
+            this.bwdAdjListsPool[i] = new AdjacencyList(numLabels, largestBwdAdjListSize);
+        }
+    }
 
     /**
      * Constructs a {@link Graph} object.
@@ -57,140 +134,137 @@ public class Graph {
      * @param bwdAdjLists are the backward adjacency lists.
      * @param highestVertexId is the highest vertex ID.
      */
-    public Graph(SortedAdjList[] fwdAdjLists, SortedAdjList[] bwdAdjLists, int highestVertexId) {
+    public Graph(AdjacencyList[] fwdAdjLists, AdjacencyList[] bwdAdjLists, int highestVertexId,
+        int numLabels) {
+        this(numLabels);
         this.fwdAdjLists = fwdAdjLists;
         this.bwdAdjLists = bwdAdjLists;
         this.highestVertexId = highestVertexId;
     }
 
-    /**
-     * @param fromType is the from query vertex type.
-     * @param toType is the to query vertex type.
-     * @param label is the edge label.
-     * @return The number of edges.
-     */
-    public int getNumEdges(short fromType, short toType, short label) {
-        if (fromType == KeyStore.ANY && toType == KeyStore.ANY) {
-            return labelOrToTypeToNumEdges[label];
-        } else if (fromType != KeyStore.ANY && toType != KeyStore.ANY) {
-            return edgeKeyToNumEdgesMap.get(getEdgeKey(fromType, toType, label));
-        } else if (fromType != KeyStore.ANY) {
-            return fromTypeAndLabelToPercentageMap.get(getEdgeKey(fromType, label));
+    public void insertEdgeTemporarily(int fromVertex, int toVertex, short label) {
+        var maxNewVertexId = Integer.max(fromVertex, toVertex);
+        if (maxNewVertexId > highestVertexId) {
+            throw new IllegalArgumentException();
         }
-        return labelAndToTypeToPercentageMap.get(getEdgeKey(label, toType));
+        var idx = deltaSizes[label] * 2;
+        deltaEdges[label][idx] = fromVertex;
+        deltaEdges[label][idx + 1] = toVertex;
+        deltaSizes[label]++;
+        createNewAdjList(fromVertex, toVertex, label, newFwdAdjLists, fwdAdjLists);
+        createNewAdjList(toVertex, fromVertex, label, newBwdAdjLists, bwdAdjLists);
+    }
+
+    public void finalizeChanges() {
+        fwdPoolIdx = 0;
+        bwdPoolIdx = 0;
+        updateAdjLists(fwdAdjLists, newFwdAdjLists);
+        updateAdjLists(bwdAdjLists, newBwdAdjLists);
+        for (var i = 0; i < deltaSizes.length; i++) {
+            deltaSizes[i] = 0;
+        }
+    }
+
+    private void updateAdjLists(AdjacencyList[] adjLists, Map<Integer, AdjacencyList> newAdjLists) {
+        for (var fromVertex : newAdjLists.keySet()) {
+            adjLists[fromVertex].copy(newAdjLists.get(fromVertex));
+        }
+        newAdjLists.clear();
+    }
+
+    private void createNewAdjList(int fromVertex, int toVertex, short label,
+        Map<Integer, AdjacencyList> mergedAdjLists, AdjacencyList[] adjLists) {
+        if (mergedAdjLists.containsKey(fromVertex)) {
+            mergedAdjLists.get(fromVertex).insert(toVertex, label);
+        } else {
+            var oldAdjList = adjLists[fromVertex];
+            var newAdjList = adjLists == fwdAdjLists ?
+                fwdAdjListsPool[fwdPoolIdx++] : bwdAdjListsPool[bwdPoolIdx++];
+            newAdjList.copy(oldAdjList);
+            newAdjList.insert(toVertex, label);
+            mergedAdjLists.put(fromVertex, newAdjList);
+        }
+    }
+
+    @SuppressWarnings("fallthrough")
+    public AdjacencyList getAdjList(int vertexId, Direction direction, Version version) {
+        switch (version) {
+            case NEW:
+                if (direction == Direction.FWD && newFwdAdjLists.containsKey(vertexId)) {
+                    return newFwdAdjLists.get(vertexId);
+                } else if (direction == Direction.BWD && newBwdAdjLists.containsKey(vertexId)) {
+                    return newBwdAdjLists.get(vertexId);
+                }
+            case OLD:
+                return direction == Direction.FWD ? fwdAdjLists[vertexId] : bwdAdjLists[vertexId];
+        }
+        // never happens.
+        throw new IllegalArgumentException();
     }
 
     /**
-     * @param labelOrToType is the edge label.
+     * @param label is the edge label.
      * @param direction is the direction of extension as forward or backward.
      * @return The largest adjacency list size.
      */
-    public int getLargestAdjListSize(short labelOrToType, Direction direction) {
-        if (Direction.Fwd == direction) {
-            return labelOrTypeToLargestFwdAdjListSize[labelOrToType];
-        } else {
-            return labelOrTypeToLargestBwdAdjListSize[labelOrToType];
-        }
+    public int getLargestAdjListSize(short label, Direction direction) {
+        return (Direction.FWD == direction ?
+            labelToLargestFwdAdjListSize[label] : labelToLargestBwdAdjListSize[label]) + 100 *
+                Graph.EDGE_BATCH_SIZE; // <- TODO: instead update labelToLargestFwdAdjListSize.
     }
 
     /**
-     * @param store is the vertex types and edge labelsOrToTypes key store.
+     * @param numLabels is the number of labels in ...
      */
-    void setEdgeCountsAndLargestAdjListSizes(KeyStore store) {
+    void setEdgeCountsAndLargestAdjListSizes(int numLabels) {
         // set the largest adjacency list sizes for forward and backward directions per label.
-        isAdjListSortedByType = store.getNextLabelKey() == 1  /*key 0 only used -> single label.*/
-                             && store.getNextTypeKey()   > 1; /*at least 2 vertex key types used.*/
-        var numLabelsOrToTypes = isAdjListSortedByType ?
-            store.getNextTypeKey() : store.getNextLabelKey();
-        labelOrToTypeToNumEdges = new int[numLabelsOrToTypes];
-        labelOrTypeToLargestFwdAdjListSize = new int[numLabelsOrToTypes];
-        labelOrTypeToLargestBwdAdjListSize = new int[numLabelsOrToTypes];
+        numEdgesPerLabel = new int[numLabels];
+        labelToLargestFwdAdjListSize = new int[numLabels];
+        labelToLargestBwdAdjListSize = new int[numLabels];
         for (var vertexId = 0; vertexId <= highestVertexId; vertexId++) {
-            numEdges += fwdAdjLists[vertexId].size();
-            for (short labelOrToType = 0; labelOrToType < numLabelsOrToTypes; labelOrToType++) {
-                var adjListSize = fwdAdjLists[vertexId].size(labelOrToType);
-                labelOrToTypeToNumEdges[labelOrToType] += adjListSize;
-                if (adjListSize > labelOrTypeToLargestFwdAdjListSize[labelOrToType]) {
-                    labelOrTypeToLargestFwdAdjListSize[labelOrToType] = adjListSize;
+            var fwdAdjListSize = fwdAdjLists[vertexId].size();
+            if (fwdAdjListSize > largestFwdAdjListSize) {
+                largestFwdAdjListSize = fwdAdjListSize;
+            }
+            var bwdAdjListSize = bwdAdjLists[vertexId].size();
+            if (bwdAdjListSize > largestBwdAdjListSize) {
+                largestBwdAdjListSize = bwdAdjListSize;
+            }
+            for (short label = 0; label < numLabels; label++) {
+                var adjListSize = fwdAdjLists[vertexId].size(label);
+                numEdges += adjListSize;
+                numEdgesPerLabel[label] += adjListSize;
+                if (adjListSize > labelToLargestFwdAdjListSize[label]) {
+                    labelToLargestFwdAdjListSize[label] = adjListSize;
                 }
             }
-            for (short labelOrToType = 0; labelOrToType < numLabelsOrToTypes; labelOrToType++) {
-                var adjListSize = bwdAdjLists[vertexId].size(labelOrToType);
-                if (adjListSize > labelOrTypeToLargestBwdAdjListSize[labelOrToType]) {
-                    labelOrTypeToLargestBwdAdjListSize[labelOrToType] = adjListSize;
-                }
-            }
-        }
-        // Set the edge keys (fromType-label-toType), (fromType-label), and (label-toType) to
-        // the percentage of number of edges.
-        edgeKeyToNumEdgesMap = new HashMap<>();
-        labelAndToTypeToPercentageMap = new HashMap<>();
-        fromTypeAndLabelToPercentageMap = new HashMap<>();
-        var numVertices = highestVertexId + 1;
-        for (short fromType = 0; fromType < store.getNextTypeKey(); fromType++) {
-            for (short toType = 0; toType < store.getNextTypeKey(); toType++) {
-                for (short label = 0; label < store.getNextLabelKey(); label++) {
-                    var edge = getEdgeKey(fromType, toType, label);
-                    edgeKeyToNumEdgesMap.putIfAbsent(edge, 0);
-                    var labelAndToType = getEdgeKey(label, toType);
-                    labelAndToTypeToPercentageMap.putIfAbsent(labelAndToType, 0);
-                    var fromTypeAndLabel = getEdgeKey(fromType, label);
-                    fromTypeAndLabelToPercentageMap.putIfAbsent(fromTypeAndLabel, 0);
+            for (short label = 0; label < numLabels; label++) {
+                var adjListSize = bwdAdjLists[vertexId].size(label);
+                if (adjListSize > labelToLargestBwdAdjListSize[label]) {
+                    labelToLargestBwdAdjListSize[label] = adjListSize;
                 }
             }
         }
-        for (var fromVertex = 0; fromVertex < numVertices; fromVertex++) {
-            var fromType = vertexTypes[fromVertex];
-            var offsets = fwdAdjLists[fromVertex].getLabelOrTypeOffsets();
-            if (isAdjListSortedByType) {
-                short label = 0;
-                for (short toType = 0; toType < offsets.length - 1; toType++) {
-                    var numEdges = offsets[toType + 1] - offsets[toType];
-                    addEdgeCount(fromType, toType, label, numEdges);
-                }
-            } else {
-                var neighbours = fwdAdjLists[fromVertex].getNeighbourIds();
-                for (short label = 0; label < offsets.length - 1; label++) {
-                    for (var toIdx = offsets[label]; toIdx < offsets[label + 1]; toIdx++) {
-                        var toType = vertexTypes[neighbours[toIdx]];
-                        addEdgeCount(fromType, toType, label, 1);
-                    }
+        largestFwdAdjListSize *= 2 /* multiplier */;
+        largestBwdAdjListSize *= 2 /* multiplier */;
+    }
+
+    // Warning: Not scalable implementation. Meant to work only with few million edge datasets.
+    public int[] getFlatEdges(short label) {
+        var edges = new int[2 * numEdgesPerLabel[label]];
+        var idx = 0;
+        for (var vertexId = 0; vertexId <= highestVertexId; vertexId++) {
+            var adjList = fwdAdjLists[vertexId];
+            if (null != adjList) {
+                var startIdx = adjList.getPartitionOffsets()[label];
+                var endIdx = adjList.getPartitionOffsets()[label + 1];
+                for (var i = startIdx; i < endIdx; i++) {
+                    edges[idx++] = vertexId;
+                    edges[idx++] = adjList.getNeighbourId(i);
                 }
             }
         }
-    }
-
-    private void addEdgeCount(short fromType, short toType, short label, int numEdges) {
-        var edge = getEdgeKey(fromType, toType, label);
-        edgeKeyToNumEdgesMap.put(edge, edgeKeyToNumEdgesMap.get(edge) + numEdges);
-        var labelAndToType = getEdgeKey(label, toType);
-        labelAndToTypeToPercentageMap.put(labelAndToType,
-            labelAndToTypeToPercentageMap.get(labelAndToType) + numEdges);
-        var fromTypeAndLabel = getEdgeKey(fromType, label);
-        fromTypeAndLabelToPercentageMap.put(fromTypeAndLabel,
-            fromTypeAndLabelToPercentageMap.get(fromTypeAndLabel) + numEdges);
-    }
-
-    /**
-     * @param fromType is the from query vertex type.
-     * @param toType is the to query vertex type.
-     * @param label is the query edge label.
-     * @return the edge key.
-     */
-    public static long getEdgeKey(short fromType, short toType, short label) {
-        return ((long) (fromType & 0xFFFF    ) << 48) |
-               ((long) (label    & 0x0000FFFF) << 16) |
-               ((long) (toType   & 0xFFFF    )      ) ;
-    }
-
-    /**
-     * @param typeOrLabel is the from query vertex type.
-     * @param typeOrLabel2 is the to query vertex type.
-     * @return the edge key.
-     */
-    private int getEdgeKey(short typeOrLabel, short typeOrLabel2) {
-        return ((typeOrLabel  & 0x0000FFFF) << 16) |
-               ((typeOrLabel2 & 0xFFFF    )      ) ;
+        return edges;
     }
 
     /**
@@ -203,21 +277,15 @@ public class Graph {
         logger.info("Serializing the data graph.");
         IOUtils.serializeObjs(directoryPath, new Object[] {
             /* <filename , field to serialize> pair */
-            "vertexIds", vertexIds,
-            "vertexTypes", vertexTypes,
-            "vertexTypeOffsets", vertexTypeOffsets,
-            "highestVertexId", highestVertexId,
+            "numEdges", numEdges,
             "fwdAdjLists", fwdAdjLists,
             "bwdAdjLists", bwdAdjLists,
-            "numEdges", numEdges,
-            "isAdjListSortedByType", isAdjListSortedByType,
-            "labelOrToTypeToNumEdges", labelOrToTypeToNumEdges,
-            "labelOrTypeToLargestFwdAdjListSize", labelOrTypeToLargestFwdAdjListSize,
-            "labelOrTypeToLargestBwdAdjListSize", labelOrTypeToLargestBwdAdjListSize,
-            "edgeKeyToNumEdgesMap", edgeKeyToNumEdgesMap,
-            "labelAndToTypeToPercentageMap", labelAndToTypeToPercentageMap,
-            "fromTypeAndLabelToPercentageMap", fromTypeAndLabelToPercentageMap,
-            "isUndirected", isUndirected
+            "highestVertexId", highestVertexId,
+            "numEdgesPerLabel", numEdgesPerLabel,
+            "largestFwdAdjListSize", largestFwdAdjListSize,
+            "largestBwdAdjListSize", largestBwdAdjListSize,
+            "labelToLargestFwdAdjListSize", labelToLargestFwdAdjListSize,
+            "labelToLargestBwdAdjListSize", labelToLargestBwdAdjListSize
         });
     }
 }

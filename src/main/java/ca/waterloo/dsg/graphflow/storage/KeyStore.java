@@ -1,7 +1,6 @@
 package ca.waterloo.dsg.graphflow.storage;
 
 import ca.waterloo.dsg.graphflow.util.IOUtils;
-import lombok.Getter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -16,14 +15,22 @@ import java.util.Map;
  */
 public class KeyStore {
 
-    private static final Logger logger = LogManager.getLogger(KeyStore.class);
+    private static Logger logger = LogManager.getLogger(KeyStore.class);
 
     public static short ANY = -1;
 
-    @Getter private short nextTypeKey = 0;
-    @Getter private short nextLabelKey = 0;
-    private Map<String, Short> stringToShortTypeKeyMap = new HashMap<>();
-    private Map<String, Short> stringToShortLabelKeyMap = new HashMap<>();
+    private short nextTypeKey = 0;
+    private short nextLabelKey = 0;
+    public Map<String, Short> stringToShortTypeKeyMap = new HashMap<>();
+    public Map<String, Short> stringToShortLabelKeyMap = new HashMap<>();
+
+    public short getNextLabelKey() {
+        return nextLabelKey;
+    }
+
+    public short getNextTypeKey() {
+        return nextTypeKey;
+    }
 
     /**
      * Constructs a {@link KeyStore} object.
@@ -97,13 +104,33 @@ public class KeyStore {
             logger.error("Max number of keys inserted.");
             throw new IllegalArgumentException("Max number of keys inserted.");
         }
-        // logger.info("Inserting key '" + key + "' as " + nextKey + " in KeyStore.");
         stringToShortKeyMap.put(key, nextKey);
         if (stringToShortKeyMap.equals(stringToShortTypeKeyMap)) {
             return nextTypeKey++;
         } else { // .equals(stringToShortLabelKeyMap)
             return nextLabelKey++;
         }
+    }
+
+    /**
+     * Constructs a {@link KeyStore} object from binary serialized data.
+     *
+     * @param directoryPath is the directory to deserialize binary data.
+     * @return the constructed graph object.
+     * @throws IOException if stream to file cannot be written to or closed.
+     * @throws ClassNotFoundException if the object read is from input stream is not found.
+     */
+    @SuppressWarnings("unchecked") // casting.
+    public static KeyStore deserialize(String directoryPath) throws IOException,
+        ClassNotFoundException {
+        var stringToShortTypeKeyMap = (HashMap<String, Short>) IOUtils.deserializeObj(
+            directoryPath + "TypesKeyMap");
+        var stringToShortLabelKeyMap = (HashMap<String, Short>) IOUtils.deserializeObj(
+            directoryPath + "LabelsKeyMap");
+        var nextTypeKey = (short) IOUtils.deserializeObj(directoryPath + "nextTypeKey");
+        var nextLabelKey = (short) IOUtils.deserializeObj(directoryPath + "nextLabelKey");
+        return new KeyStore(stringToShortTypeKeyMap, stringToShortLabelKeyMap,
+            nextTypeKey, nextLabelKey);
     }
 
     /**

@@ -1,16 +1,13 @@
 package ca.waterloo.dsg.graphflow.plan.operator.scan;
 
 import ca.waterloo.dsg.graphflow.plan.operator.Operator;
+import ca.waterloo.dsg.graphflow.planner.Catalog.Catalog;
 import ca.waterloo.dsg.graphflow.query.QueryGraph;
 import ca.waterloo.dsg.graphflow.storage.Graph;
 import ca.waterloo.dsg.graphflow.storage.KeyStore;
-import ca.waterloo.dsg.graphflow.storage.SortedAdjList;
 import ca.waterloo.dsg.graphflow.util.collection.MapUtils;
-import lombok.Getter;
-import lombok.var;
 
 import java.io.Serializable;
-import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -19,13 +16,9 @@ import java.util.Map;
  */
 public class Scan extends Operator implements Serializable {
 
-    @Getter protected String fromQueryVertex, toQueryVertex;
-    @Getter short fromType, toType, labelOrToType;
-
-    SortedAdjList[] fwdAdjList;
-    private int fromVertexStartIdx, fromVertexEndIdx;
-    int[] vertexIds;
-    short[] vertexTypes;
+    protected String fromVertex, toVertex;
+    short fromType, toType, label;
+    private int[] deltaEdges, deltaSizes;
 
     /**
      * Constructs a {@link Scan} operator.
@@ -33,45 +26,26 @@ public class Scan extends Operator implements Serializable {
      * @param outSubgraph is the subgraph matched by the scanned output tuples.
      */
     public Scan(QueryGraph outSubgraph) {
-        super(outSubgraph, null /* no inSubgraph */);
-        if (outSubgraph.getEdges().size() > 1) {
-            throw new IllegalArgumentException();
-        }
+        super(outSubgraph, null /* inSubgraph */);
         var queryEdge = outSubgraph.getEdges().get(0);
         fromType = queryEdge.getFromType();
         toType = queryEdge.getToType();
-        labelOrToType = queryEdge.getLabel();
-        lastRepeatedVertexIdx = 0;
-        fromQueryVertex = queryEdge.getFromVertex();
-        toQueryVertex = queryEdge.getToVertex();
-        outQVertexToIdxMap = new HashMap<>();
-        outQVertexToIdxMap.put(fromQueryVertex, 0);
-        outQVertexToIdxMap.put(toQueryVertex,   1);
-        name = "SCAN (" + fromQueryVertex + ")->(" + toQueryVertex + ")";
+        label = queryEdge.getLabel();
+        fromVertex = queryEdge.getFromVertex();
+        toVertex = queryEdge.getToVertex();
+        name = "SCAN (" + fromVertex + ")->(" + toVertex + ")";
     }
 
     /**
      * @see Operator#init(int[], Graph, KeyStore)
      */
     @Override
-    public void init(int[] probeTuple, Graph graph, KeyStore store) {
-        this.probeTuple = probeTuple;
-        this.vertexIds = graph.getVertexIds();
-        this.vertexTypes = graph.getVertexTypes();
-        if (KeyStore.ANY != fromType) {
-            this.fromVertexStartIdx = graph.getVertexTypeOffsets()[fromType];
-            this.fromVertexEndIdx = graph.getVertexTypeOffsets()[fromType + 1];
-        } else {
-            this.fromVertexStartIdx = 0;
-            this.fromVertexEndIdx = graph.getHighestVertexId() + 1;
-        }
-        this.fwdAdjList = graph.getFwdAdjLists();
-        if (graph.isAdjListSortedByType()) {
-            labelOrToType = toType;
-            toType = KeyStore.ANY;
-        }
+    public void init(int[] tuple, Graph graph, KeyStore store) {
+        this.tuple = tuple;
+        this.deltaEdges = graph.getDeltaEdges()[label];
+        this.deltaSizes = graph.getDeltaSizes();
         for (var nextOperator : next) {
-            nextOperator.init(probeTuple, graph, store);
+            nextOperator.init(tuple, graph, store);
         }
     }
 
@@ -79,65 +53,45 @@ public class Scan extends Operator implements Serializable {
      * @see Operator#execute()
      */
     @Override
-    public void execute() throws LimitExceededException {
-        int fromVertex, toVertexStartIdx, toVertexEndIdx;
-        for (var fromIdx = fromVertexStartIdx; fromIdx < fromVertexEndIdx; fromIdx++) {
-            fromVertex = vertexIds[fromIdx];
-            probeTuple[0] = fromVertex;
-            toVertexStartIdx = fwdAdjList[fromVertex].getLabelOrTypeOffsets()[labelOrToType];
-            toVertexEndIdx = fwdAdjList[fromVertex].getLabelOrTypeOffsets()[labelOrToType + 1];
-            for (var toIdx = toVertexStartIdx; toIdx < toVertexEndIdx; toIdx++) {
-                probeTuple[1] = fwdAdjList[fromVertex].getNeighbourId(toIdx);
-                if (toType == KeyStore.ANY || vertexTypes[probeTuple[1]] == toType) {
-                    numOutTuples++;
-                    next[0].processNewTuple();
-                }
+    public void execute() {
+        for (var i = 0; i < deltaSizes[label]; i++) {
+            tuple[0] = deltaEdges[i * 2];
+            tuple[1] = deltaEdges[(i * 2)+ 1];
+            numOutTuples++;
+            for (var nextOperator : next) {
+                nextOperator.processNewTuple();
             }
         }
     }
 
-    /**
-     * @see Operator#updateOperatorName(Map)
-     */
     @Override
-    public void updateOperatorName(Map<String, Integer> queryVertexToIndexMap) {
-        queryVertexToIndexMap = new HashMap<>();
-        queryVertexToIndexMap.put(fromQueryVertex, 0);
-        queryVertexToIndexMap.put(toQueryVertex, 1);
+    public void setIdxToNumOutTuples(Map<Integer, Double> idxToNumOutTuples, Catalog catalog) {
+        expectedNumOutTuples = (double) Graph.EDGE_BATCH_SIZE;
+        idxToNumOutTuples.put(0, expectedNumOutTuples);
+        idxToNumOutTuples.put(1, expectedNumOutTuples);
+    }
+
+    public double getExpectedTotalICost() {
+        var iCostSum = expectedICost;
         if (null != next) {
             for (var nextOperator : next) {
-                nextOperator.updateOperatorName(MapUtils.copy(queryVertexToIndexMap));
+                iCostSum += nextOperator.getExpectedTotalICost();
             }
         }
+        return iCostSum;
     }
 
-    /**
-     * @see Operator#processNewTuple()
-     */
-    @Override
-    public void processNewTuple() {
-        throw new UnsupportedOperationException(
-            this.getClass().getSimpleName() + " does not support execute().");
-    }
-
-    /**
-     * @see Operator#copy(boolean)
-     */
-    @Override
-    public Scan copy(boolean isThreadSafe) {
-        if (isThreadSafe) {
-            return new ScanBlocking(outSubgraph);
+    public Scan copy() {
+        var scan = new Scan(outSubgraph);
+        var nextOperators = new Operator[next.length];
+        for (var i = 0; i < nextOperators.length; i++) {
+            nextOperators[i] = next[i].copy();
+            nextOperators[i].setPrev(scan);
         }
-        return new Scan(outSubgraph);
-    }
-
-    /**
-     * @see Operator#isSameAs(Operator)
-     */
-    public boolean isSameAs(Operator operator) {
-        return operator instanceof Scan &&
-            fromType == ((Scan) operator).fromType &&
-            toType == ((Scan) operator).toType &&
-            labelOrToType == ((Scan) operator).labelOrToType;
+        scan.next = nextOperators;
+        scan.vertexToIdxMap = MapUtils.copy(vertexToIdxMap);
+        scan.expectedNumOutTuples = expectedNumOutTuples;
+        scan.lastRepeatedVertexIdx = lastRepeatedVertexIdx;
+        return scan;
     }
 }

@@ -1,7 +1,5 @@
 package ca.waterloo.dsg.graphflow.util.collection;
 
-import lombok.var;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -10,19 +8,6 @@ import java.util.Map;
  * Utilities for generic map data structures.
  */
 public class MapUtils {
-
-    /**
-     * @param map The map to check if each key, element pair are equal.
-     * @return True if each, key, element pair are equal. False, otherwise.
-     */
-    public static <K, V> boolean isEachKeyElementPairEqual(Map<K, V> map) {
-        for (var key : map.keySet()) {
-            if (!key.equals(map.get(key))) {
-                return false;
-            }
-        }
-        return true;
-    }
 
     /**
      * @param elements The list of elements to turn into an element to position map.

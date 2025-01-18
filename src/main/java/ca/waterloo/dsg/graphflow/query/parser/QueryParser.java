@@ -4,12 +4,14 @@ import ca.waterloo.dsg.graphflow.grammar.GraphflowLexer;
 import ca.waterloo.dsg.graphflow.grammar.GraphflowParser;
 import ca.waterloo.dsg.graphflow.query.QueryGraph;
 import ca.waterloo.dsg.graphflow.storage.KeyStore;
-import lombok.var;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.misc.ParseCancellationException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Converts a raw query string into a {@code ParsedQuery} object.
@@ -37,6 +39,18 @@ public class QueryParser {
             return null;
         }
         return queryGraph;
+    }
+
+    public static List<QueryGraph> parseDeltaQueries(String query, KeyStore store) {
+        var queryGraph = parse(query, store);
+        var queryEdges = queryGraph.getEdges();
+        var deltaQueries = new ArrayList<QueryGraph>();
+        for (var i = 0; i < queryEdges.size(); i++) {
+            var copy = queryGraph.copy();
+            copy.setEdgeVersion(i);
+            deltaQueries.add(copy);
+        }
+        return deltaQueries;
     }
 
     private static QueryGraph parseAntlr(String query, KeyStore store)

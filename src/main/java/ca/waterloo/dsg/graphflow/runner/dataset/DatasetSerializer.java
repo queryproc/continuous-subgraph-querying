@@ -3,9 +3,8 @@ package ca.waterloo.dsg.graphflow.runner.dataset;
 import ca.waterloo.dsg.graphflow.runner.AbstractRunner;
 import ca.waterloo.dsg.graphflow.runner.ArgsFactory;
 import ca.waterloo.dsg.graphflow.storage.Graph;
-import ca.waterloo.dsg.graphflow.storage.GraphFactory;
+import ca.waterloo.dsg.graphflow.storage.GraphLoader;
 import ca.waterloo.dsg.graphflow.storage.KeyStore;
-import lombok.var;
 import org.apache.commons.cli.Options;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -39,24 +38,11 @@ public class DatasetSerializer extends AbstractRunner {
             if (cmdLine.hasOption(ArgsFactory.EDGES_FILE_SEPARATOR)) {
                 edgesSeparator = cmdLine.getOptionValue(ArgsFactory.EDGES_FILE_SEPARATOR);
             }
-            if (cmdLine.hasOption(ArgsFactory.INPUT_FILE_VERTICES)) {
-                var csvVerticesFile = cmdLine.getOptionValue(ArgsFactory.INPUT_FILE_VERTICES);
-                String verticesSeparator = ",";
-                if (cmdLine.hasOption(ArgsFactory.VERTICES_FILE_SEPARATOR)) {
-                    verticesSeparator = cmdLine.getOptionValue(ArgsFactory.
-                        VERTICES_FILE_SEPARATOR);
-                }
-                graph = new GraphFactory().make(csvVerticesFile, verticesSeparator,
-                    csvEdgesFile, edgesSeparator, store);
-            } else {
-                graph = new GraphFactory().make(csvEdgesFile, edgesSeparator, store);
-            }
+            graph = new GraphLoader().make(csvEdgesFile, edgesSeparator, store);
         } catch (IOException e) {
             logger.info("Could not load the csv input graph data.");
             return;
         }
-
-        graph.setUndirected(cmdLine.hasOption(ArgsFactory.UNDIRECTED));
 
         // Serialize the data and save the files in the given output directory.
         var outputDirectory = sanitizeDirStrAndMkdirIfNeeded(cmdLine.getOptionValue(
@@ -65,7 +51,7 @@ public class DatasetSerializer extends AbstractRunner {
             store.serialize(outputDirectory);
             graph.serialize(outputDirectory);
         } catch (IOException e) {
-            logger.error("Error in serialization: ", e.getMessage());
+            logger.error("Error in serialization: " + e.getMessage());
         }
     }
 
@@ -77,9 +63,6 @@ public class DatasetSerializer extends AbstractRunner {
         options.addOption(ArgsFactory.getInputFileEdges());        // INPUT_FILE_EDGES        -e
         options.addOption(ArgsFactory.getOutputDirOption());       // SERIALIZE_OUTPUT        -o
         options.addOption(ArgsFactory.getEdgesFileSeparator());    // EDGES_FILE_SEPARATOR    -m
-        options.addOption(ArgsFactory.getInputFileVertices());     // INPUT_FILE_VERTICES     -v
-        options.addOption(ArgsFactory.getVerticesFileSeparator()); // VERTICES_FILE_SEPARATOR -n
-        options.addOption(ArgsFactory.getIsGraphUndirected());     // UNDIRECTED             -u
         return options;
     }
 }

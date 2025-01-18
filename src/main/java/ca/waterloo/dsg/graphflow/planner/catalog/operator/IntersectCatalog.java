@@ -1,100 +1,125 @@
-package ca.waterloo.dsg.graphflow.planner.catalog.operator;
+package ca.waterloo.dsg.graphflow.planner.Catalog.operator;
 
 import ca.waterloo.dsg.graphflow.plan.operator.AdjListDescriptor;
 import ca.waterloo.dsg.graphflow.plan.operator.Operator;
 import ca.waterloo.dsg.graphflow.plan.operator.extend.EI;
-import ca.waterloo.dsg.graphflow.plan.operator.extend.Intersect;
+import ca.waterloo.dsg.graphflow.planner.Catalog.Catalog;
 import ca.waterloo.dsg.graphflow.query.QueryGraph;
+import ca.waterloo.dsg.graphflow.storage.Graph;
 import ca.waterloo.dsg.graphflow.storage.KeyStore;
-import lombok.var;
+import ca.waterloo.dsg.graphflow.util.collection.MapUtils;
 
 import java.io.Serializable;
 import java.util.List;
-import java.util.Map;
 
 /**
- * Given a set of input tuples from the prev {@link Operator}, E/I extends the tuples by one query
- * vertex.
+ * Given input tuples from a prev {@link Operator}, Intersect extends the tuples by one vertex.
  */
-public class IntersectCatalog extends Intersect implements Serializable {
+public class IntersectCatalog extends EI implements Serializable {
 
-    private boolean isAdjListSortedByType;
-    private long lastIcost = 0;
+    // Used to return output of the intersection for vertex & edge Ids.
+    private transient int[] outNeighbourIds;
+    private transient AdjListSlice outSlice;
+    private transient int[] tempNeighbourIds;    /* used when intersecting. */
+    private double[] ICostValues;
+
+    public IntersectCatalog(String toVertex, List<AdjListDescriptor> ALDs, QueryGraph outSubgraph) {
+        super(toVertex, ALDs, outSubgraph, null /* inSubgraph */);
+        ICostValues = new double[ALDs.size()];
+    }
 
     /**
-     * @see EI#make(String, short, List, QueryGraph, QueryGraph, Map)
+     * @see Operator#init(int[], Graph, KeyStore)
      */
-    public IntersectCatalog(String toQVertex, short toType, List<AdjListDescriptor> ALDs,
-        QueryGraph outSubgraph, QueryGraph inSubgraph, Map<String, Integer> outQVertexToIdxMap,
-        boolean isAdjListSortedByType) {
-        super(toQVertex, toType, ALDs, outSubgraph, inSubgraph, outQVertexToIdxMap);
-        this.isAdjListSortedByType = isAdjListSortedByType;
+    @Override
+    public void init(int[] tuple, Graph graph, KeyStore store) {
+        super.init(tuple, graph, store);
+        allocateBuffers(getLargestAdjListSize(ALDs));
     }
 
     /**
      * @see Operator#processNewTuple()
      */
     @Override
-    public void processNewTuple() throws LimitExceededException {
-        if (1 == ALDs.size()) {
-        // intersect the adjacency lists and setAdjListSortOrder the output vertex values.
-        adjListsToCache[0][probeTuple[vertexIdxToCache[0]]].setNeighbourIds(
-            labelsOrToTypesToCache[0], outNeighbours);
-        icost += outNeighbours.endIdx - outNeighbours.startIdx;
-        } else {
-        // intersect the adjacency lists and setAdjListSortOrder the output vertex values.
-        Neighbours temp;
-        if (cachingType == CachingType.NONE || !isIntersectionCached()) {
-            adjListsToCache[0][probeTuple[vertexIdxToCache[0]]].setNeighbourIds(
-                labelsOrToTypesToCache[0], initNeighbours);
-            lastIcost = initNeighbours.endIdx - initNeighbours.startIdx;
-            lastIcost += adjListsToCache[1][probeTuple[vertexIdxToCache[1]]].intersect(
-                labelsOrToTypesToCache[1], initNeighbours, cachedNeighbours);
-            if (toType != KeyStore.ANY) {
-                var currEndIdx = 0;
-                for (var i = cachedNeighbours.startIdx; i < cachedNeighbours.endIdx; i++) {
-                    if (vertexTypes[cachedNeighbours.Ids[i]] == toType) {
-                        cachedNeighbours.Ids[currEndIdx++] = cachedNeighbours.Ids[i];
-                    }
+    public void processNewTuple() {
+        var ALD = ALDs.get(0);
+        var ID = tuple[ALD.getFromPos()];
+        var adjList = graph.getAdjList(ID, ALD.getDirection(), ALD.getVersion());
+        adjList.setNeighbourIds(ALD.getLabel(), outSlice);
+        ICostValues[0] += (outSlice.endIdx - outSlice.startIdx);
+        ALD = ALDs.get(1);
+        ID = tuple[ALD.getFromPos()];
+        ICostValues[1] += graph.getAdjList(ID, ALD.getDirection(), ALD.getVersion()).intersect(
+            adjList.getNeighbourIds(), outSlice.startIdx, outSlice.endIdx, ALD.getLabel(),
+                outNeighbourIds, outSlice);
+        for (var i = 2; i < ALDs.size(); i++) {
+            var temp = outNeighbourIds;
+            outNeighbourIds = tempNeighbourIds;
+            tempNeighbourIds = temp;
+            ALD = ALDs.get(i);
+            ID = tuple[ALD.getFromPos()];
+            ICostValues[i] += graph.getAdjList(ID, ALD.getDirection(), ALD.getVersion()).intersect(
+                tempNeighbourIds, outSlice.startIdx, outSlice.endIdx, ALD.getLabel(),
+                    outNeighbourIds, outSlice);
+        }
+        numOutTuples += (outSlice.endIdx - outSlice.startIdx);
+        for (var idx = outSlice.startIdx; idx < outSlice.endIdx; idx++) {
+            tuple[outIdx] = outNeighbourIds[idx];
+            if (null != next) {
+                for (var nextOperator : next) {
+                    nextOperator.processNewTuple();
                 }
-                cachedNeighbours.endIdx = currEndIdx;
-            }
-            for (var i = 2; i < adjListsToCache.length; i++) {
-                temp = cachedNeighbours;
-                cachedNeighbours = tempNeighbours;
-                tempNeighbours = temp;
-                lastIcost += adjListsToCache[i][probeTuple[vertexIdxToCache[i]]].intersect(
-                    labelsOrToTypesToCache[i], tempNeighbours, cachedNeighbours);
             }
         }
-        switch (cachingType) {
-            case NONE:
-            case FULL_CACHING:
-                icost += lastIcost;
-                outNeighbours = cachedNeighbours;
-                break;
-            case PARTIAL_CACHING:
-                icost += adjLists[0][probeTuple[vertexIdx[0]]].intersect(
-                    labelsOrToTypes[0], cachedNeighbours, outNeighbours);
-                for (int i = 1; i < adjLists.length; i++) {
-                    temp = outNeighbours;
-                    outNeighbours = tempNeighbours;
-                    tempNeighbours = temp;
-                    icost += adjLists[i][probeTuple[vertexIdx[i]]].intersect(
-                        labelsOrToTypes[i], tempNeighbours, outNeighbours);
-                }
-                break;
-        }
-        }
+    }
 
-        for (var idx = outNeighbours.startIdx; idx < outNeighbours.endIdx; idx++) {
-            probeTuple[outIdx] = outNeighbours.Ids[idx];
-            numOutTuples++;
-            if (isAdjListSortedByType) {
-                next[0].processNewTuple();
-            } else {
-                next[vertexTypes[probeTuple[outIdx]]].processNewTuple();
+    @Override
+    public void addStatsToCatalog(Catalog catalog) {
+        var numInputTuples = (double) prev.getNumOutTuples();
+        for (var i = 0; i < ICostValues.length; i++) {
+            ICostValues[i] = numInputTuples != 0 ? ICostValues[i] / numInputTuples : 0.0;
+        }
+        var selectivityPerInputTuple = numInputTuples != 0 ? numOutTuples / numInputTuples : 0.0;
+        catalog.addICost(prev.getOutSubgraph(), ALDs, ICostValues);
+        catalog.addSelectivity(outSubgraph, selectivityPerInputTuple);
+        super.addStatsToCatalog(catalog);
+    }
+
+    /**
+     * Initializes the extension data structured used when intersecting.
+     */
+    private void allocateBuffers(int largestAdjListSize) {
+        outNeighbourIds = new int[largestAdjListSize];
+        outSlice = new AdjListSlice();
+        if (ALDs.size() > 2) {
+            tempNeighbourIds = new int[largestAdjListSize];
+        }
+    }
+
+    private int getLargestAdjListSize(List<AdjListDescriptor> ALDs) {
+        var largestAdjListSize = 0;
+        for (var ALD : ALDs) {
+            var adjListSize = graph.getLargestAdjListSize(ALD.getLabel(), ALD.getDirection());
+            if (adjListSize > largestAdjListSize) {
+                largestAdjListSize = adjListSize;
             }
         }
+        return largestAdjListSize;
+    }
+
+    public Operator copy() {
+        var intersectCopy = new IntersectCatalog(toVertex, ALDs, outSubgraph);
+        if (null != next) {
+            var nextOperators = new Operator[next.length];
+            for (var i = 0; i < nextOperators.length; i++) {
+                nextOperators[i] = next[i].copy();
+                nextOperators[i].setPrev(intersectCopy);
+            }
+            intersectCopy.next = nextOperators;
+        }
+        intersectCopy.vertexToIdxMap = MapUtils.copy(vertexToIdxMap);
+        intersectCopy.expectedNumOutTuples = expectedNumOutTuples;
+        intersectCopy.expectedICost = expectedICost;
+        return intersectCopy;
     }
 }

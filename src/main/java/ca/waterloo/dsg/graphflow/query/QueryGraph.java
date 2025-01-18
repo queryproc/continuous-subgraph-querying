@@ -1,9 +1,7 @@
 package ca.waterloo.dsg.graphflow.query;
 
+import ca.waterloo.dsg.graphflow.storage.Graph.Version;
 import ca.waterloo.dsg.graphflow.storage.KeyStore;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.var;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -26,75 +24,99 @@ public class QueryGraph implements Serializable {
 
     // Represents a map from a from to a to query vertex & the query edge between them.
     private Map<String, Map<String, QueryEdge>> vertexToEdgesMap = new HashMap<>();
-    @Getter private Map<String, Short> vertexToTypeMap = new HashMap<>();
+    private Map<String, Short> vertexToTypeMap = new HashMap<>();
     private Map<String, int[]> vertexToDegMap = new HashMap<>();
-    @Getter private List<QueryEdge> edges = new ArrayList<>();
+    private List<QueryEdge> edges = new ArrayList<>();
 
     // Mapping iterator used to decide if two query graphs are isomorphic.
     private IsomorphismIterator it = null;
-    private String encoding;
-    @Getter @Setter private int limit;
 
-    public short getVertexType(String queryVertex) {
+    public Map<String, Short> getVertexToTypeMap() {
+        return vertexToTypeMap;
+    }
+
+    public Short getVertexType(String queryVertex) {
         return vertexToTypeMap.get(queryVertex) == null ? 0 : vertexToTypeMap.get(queryVertex);
     }
 
-    public void setVertexType(String queryVertex, Short toType) {
-        vertexToTypeMap.put(queryVertex, toType);
-        for (var qEdge : edges) {
-            if (qEdge.getFromVertex().equals(queryVertex)) {
-                qEdge.setFromType(toType);
-            } else if (qEdge.getToVertex().equals(queryVertex)) {
-                qEdge.setToType(toType);
-            }
-        }
+    public List<QueryEdge> getEdges() {
+        return edges;
     }
 
-    public void addEdges(Collection<QueryEdge> queryEdges) {
-        queryEdges.forEach(this::addEdge);
+    public void setEdgeVersion(int i) {
+        for (var j = 0; j < i; j++) {
+            edges.get(j).setVersion(Version.NEW);
+        }
+        edges.get(i).setVersion(Version.DELTA);
+        for (var j = i + 1; j < edges.size(); j++) {
+            edges.get(j).setVersion(Version.OLD);
+        }
     }
 
     /**
      * Adds a relation to the {@link QueryGraph}. The relation is stored both in forward and
      * backward direction. There can be multiple relations with different directions and relation
-     * types between two qVertices. A backward relation between fromQueryVertex and toQueryVertex is
-     * represented by a {@link QueryEdge} from toQueryVertex to fromQueryVertex.
+     * types between two vertices. A backward relation between fromVertex and toVertex is
+     * represented by a {@link QueryEdge} from toVertex to fromVertex.
      *
-     * @param qEdge The relation to be added.
+     * @param queryEdge The relation to be added.
      */
-    public void addEdge(QueryEdge qEdge) {
-        if (qEdge == null) {
+    public void addEdge(QueryEdge queryEdge) {
+        if (queryEdge == null) {
             return;
         }
         // Get the vertex IDs.
-        var fromQVertex = qEdge.getFromVertex();
-        var toQVertex = qEdge.getToVertex();
-        var fromType = qEdge.getFromType();
-        var toType = qEdge.getToType();
-        vertexToTypeMap.putIfAbsent(fromQVertex, KeyStore.ANY);
-        vertexToTypeMap.putIfAbsent(toQVertex, KeyStore.ANY);
+        var fromVertex = queryEdge.getFromVertex();
+        var toVertex = queryEdge.getToVertex();
+        var fromType = queryEdge.getFromType();
+        var toType = queryEdge.getToType();
+        vertexToTypeMap.putIfAbsent(fromVertex, KeyStore.ANY);
+        vertexToTypeMap.putIfAbsent(toVertex, KeyStore.ANY);
         if (KeyStore.ANY != fromType) {
-            vertexToTypeMap.put(fromQVertex, fromType);
+            vertexToTypeMap.put(fromVertex, fromType);
         }
         if (KeyStore.ANY != toType) {
-            vertexToTypeMap.put(toQVertex, toType);
+            vertexToTypeMap.put(toVertex, toType);
         }
         // Set the in and out degrees for each variable.
-        if (!vertexToDegMap.containsKey(fromQVertex)) {
+        if (!vertexToDegMap.containsKey(fromVertex)) {
             int[] degrees = new int[2];
-            vertexToDegMap.put(fromQVertex, degrees);
+            vertexToDegMap.put(fromVertex, degrees);
         }
-        vertexToDegMap.get(fromQVertex)[0]++;
-        if (!vertexToDegMap.containsKey(toQVertex)) {
+        vertexToDegMap.get(fromVertex)[0]++;
+        if (!vertexToDegMap.containsKey(toVertex)) {
             int[] degrees = new int[2];
-            vertexToDegMap.put(toQVertex, degrees);
+            vertexToDegMap.put(toVertex, degrees);
         }
-        vertexToDegMap.get(toQVertex)[1]++;
-        // Add fwd edge fromQVertex -> toQVertex to the vertexToEdgesMap.
-        addQEdgeToQGraph(fromQVertex, toQVertex, qEdge);
-        // Add bwd edge toQVertex <- fromQVertex to the vertexToEdgesMap.
-        addQEdgeToQGraph(toQVertex, fromQVertex, qEdge);
-        edges.add(qEdge);
+        vertexToDegMap.get(toVertex)[1]++;
+        // Add fwd edge fromVertex -> toVertex to the vertexToEdgesMap.
+        addQEdgeToQGraph(fromVertex, toVertex, queryEdge);
+        // Add bwd edge toVertex <- fromVertex to the vertexToEdgesMap.
+        addQEdgeToQGraph(toVertex, fromVertex, queryEdge);
+        edges.add(queryEdge);
+    }
+
+    /**
+     * @param fromVertices The set of {@code String} vertices to get their to vertices.
+     * @return The set of {@code String} to vertices.
+     */
+    public Set<String> getNeighbors(Collection<String> fromVertices) {
+        var toVertices = new HashSet<String>();
+        fromVertices.forEach(fromVertex -> toVertices.addAll(getNeighbors(fromVertex)));
+        toVertices.removeAll(fromVertices);
+        return toVertices;
+    }
+
+    public QueryGraph getProjection(List<String> vertices) {
+        var projectedSubgraph = new QueryGraph();
+        for (var i = 0; i < vertices.size() - 1; i++) {
+            var vertex = vertices.get(i);
+            for (var j = i + 1; j < vertices.size(); j++) {
+                var otherVertex = vertices.get(j);
+                projectedSubgraph.addEdge(vertexToEdgesMap.get(vertex).get(otherVertex));
+            }
+        }
+        return projectedSubgraph;
     }
 
     /**
@@ -106,7 +128,7 @@ public class QueryGraph implements Serializable {
      */
     private void addQEdgeToQGraph(String fromQVertex, String toQVertex, QueryEdge qEdge) {
         vertexToEdgesMap.putIfAbsent(fromQVertex, new HashMap<>());
-        vertexToEdgesMap.get(fromQVertex).putIfAbsent(toQVertex, qEdge);
+        vertexToEdgesMap.get(fromQVertex).put(toQVertex, qEdge);
     }
 
     /**
@@ -122,13 +144,6 @@ public class QueryGraph implements Serializable {
     }
 
     /**
-     * @return A copy of all the query vertices present in the query.
-     */
-    public Set<String> getQVertices() {
-        return new HashSet<>(vertexToEdgesMap.keySet());
-    }
-
-    /**
      * @return The number of query vertices present in the query.
      */
     public int getNumVertices() {
@@ -136,72 +151,56 @@ public class QueryGraph implements Serializable {
     }
 
     /**
-     * @return The number of query edges
-     */
-    public int getNumEdges() {
-        return edges.size();
-    }
-
-    /**
-     * @param vertex The from vertex.
-     * @param neighborVertex The to vertex.
+     * @param vertex The from variable.
+     * @param neighborVertex The to variable.
      * @return A list of {@link QueryEdge}s representing all the relations present between
-     * {@code vertex} and {@code neighborVertex}.
-     * @throws NoSuchElementException if the {@code vertex} is not present in the
+     * {@code variable} and {@code neighborVertex}.
+     * @throws NoSuchElementException if the {@code variable} is not present in the
      * {@link QueryGraph}.
      */
     public QueryEdge getEdge(String vertex, String neighborVertex) {
         if (!vertexToEdgesMap.containsKey(vertex) ||
-            !vertexToEdgesMap.get(vertex).containsKey(neighborVertex)) {
+                !vertexToEdgesMap.get(vertex).containsKey(neighborVertex)) {
             return null;
         }
         return vertexToEdgesMap.get(vertex).get(neighborVertex);
     }
 
     /**
-     * @param fromVariables The set of {@code String} qVertices to get their to qVertices.
-     * @return The set of {@code String} to qVertices.
+     * @param fromVariable The {@code String} variable to get its to vertices.
+     * @return The setAdjListSortOrder of {@code String} to vertices.
      */
-    public Set<String> getNeighbors(Collection<String> fromVariables) {
-        var toVariables = new HashSet<String>();
-        for (var fromVariable : fromVariables) {
-            if (!vertexToEdgesMap.containsKey(fromVariable)) {
-                throw new NoSuchElementException("The variable '" + fromVariable + "' is not " +
-                    "present.");
-            }
-            toVariables.addAll(getNeighbors(fromVariable));
-        }
-        toVariables.removeAll(fromVariables);
-        return toVariables;
-    }
-
-    /**
-     * @param fromVariable The {@code String} variable to get its to qVertices.
-     * @return The setAdjListSortOrder of {@code String} to qVertices.
-     */
-    public List<String> getNeighbors(String fromVariable) {
+    public Collection<String> getNeighbors(String fromVariable) {
         if (!vertexToEdgesMap.containsKey(fromVariable)) {
-            throw new NoSuchElementException("The variable '" + fromVariable + "' is not present.");
+            throw new NoSuchElementException("Vertex '" + fromVariable + "' is not present.");
         }
         return new ArrayList<>(vertexToEdgesMap.get(fromVariable).keySet());
     }
 
     /**
-     * @param vertex1 is one of the qVertices.
-     * @param vertex2 is another query vertex of the qVertices.
-     * @return {@code true} if there is a query edge between {@code vertex1} and {@code vertex2} in
-     * any direction, {@code false} otherwise.
+     * @param fromVertex The {@code String} variable to get its to vertices.
+     * @return The setAdjListSortOrder of {@code String} to vertices.
      */
-    public boolean containsQueryEdge(String vertex1, String vertex2) {
-        return vertexToEdgesMap.containsKey(vertex1) &&
-            vertexToEdgesMap.get(vertex1).containsKey(vertex2);
+    public Collection<QueryEdge> getNeighborEdges(String fromVertex) {
+        if (!vertexToEdgesMap.containsKey(fromVertex)) {
+            throw new NoSuchElementException("Vertex '" + fromVertex + "' is not present.");
+        }
+        var fromEdges = new ArrayList<QueryEdge>();
+        for (var toVertex : vertexToEdgesMap.get(fromVertex).keySet()) {
+            fromEdges.add(vertexToEdgesMap.get(fromVertex).get(toVertex));
+        }
+        return fromEdges;
+    }
+
+    public boolean containsQueryVertex(String vertex) {
+        return vertexToEdgesMap.keySet().contains(vertex);
     }
 
     /**
      * Check if the {@link QueryGraph} is isomorphic to another given {@link QueryGraph}.
      *
      * @param otherQueryGraph The other {@link QueryGraph} to check for isomorphism.
-     * @return True, if the query graph and oQGraph are isomorphic. False, otherwise.
+     * @return True, if the query graph and otherQueryGraph are isomorphic. False, otherwise.
      */
     public boolean isIsomorphicTo(QueryGraph otherQueryGraph) {
         return null != otherQueryGraph && getNumVertices() == otherQueryGraph.getNumVertices() &&
@@ -231,102 +230,42 @@ public class QueryGraph implements Serializable {
      * @return A copy of the {@link QueryGraph} object.
      */
     public QueryGraph copy() {
-        var queryGraphCopy = new QueryGraph();
-        queryGraphCopy.addEdges(edges);
-        return queryGraphCopy;
-    }
-
-    /**
-     * @param queryEdgeToExclude The relation to exclude from the queryGraph being copied.
-     * @return A copy of the {@link QueryGraph} object excluding the given relation.
-     */
-    public QueryGraph copyExcluding(QueryEdge queryEdgeToExclude) {
-        var queryGraphCopy = new QueryGraph();
-        for (QueryEdge queryEdge : edges) {
-            if (!queryEdge.getFromVertex().equals(queryEdgeToExclude.getFromVertex()) ||
-                    !queryEdge.getToVertex().equals(queryEdgeToExclude.getToVertex())) {
-                queryGraphCopy.addEdge(queryEdge);
-            }
-        }
-        return queryGraphCopy;
-    }
-
-    /**
-     * @return a {@link String} encoding based on the degree of vertices and direction of edges that
-     * can be used as a hash.
-     */
-    public String getEncoding() {
-        if (encoding == null) {
-            var queryVerticesEncoded = new String[vertexToEdgesMap.size()];
-            int vertexIdx = 0;
-            for (var fromVertex : vertexToEdgesMap.keySet()) {
-                var encodingStrBuilder = new StringBuilder();
-                for (var toVertex : vertexToEdgesMap.get(fromVertex).keySet()) {
-                    var queryEdge = vertexToEdgesMap.get(fromVertex).get(toVertex);
-                    if (fromVertex.equals(queryEdge.getFromVertex())) {
-                        encodingStrBuilder.append("F");
-                    } else {
-                        encodingStrBuilder.append("B");
-                    }
-                }
-                var encodingToSort = encodingStrBuilder.toString().toCharArray();
-                Arrays.sort(encodingToSort);
-                queryVerticesEncoded[vertexIdx++] = new String(encodingToSort);
-            }
-            Arrays.sort(queryVerticesEncoded);
-            encoding = String.join(".", queryVerticesEncoded);
-        }
-        return encoding;
-    }
-
-    public String toStringWithTypesAndLabels() {
-        var stringJoiner = new StringJoiner("");
-        var isFirstQueryEdge = true;
-        for (var fromVertex : vertexToEdgesMap.keySet()) {
-            for (var toVertex : vertexToEdgesMap.get(fromVertex).keySet()) {
-                var fromType = vertexToTypeMap.get(fromVertex);
-                var toType = vertexToTypeMap.get(toVertex);
-                var queryEdge = vertexToEdgesMap.get(fromVertex).get(toVertex);
-                var label = queryEdge.getLabel();
-                if (queryEdge.getFromVertex().equals(fromVertex)) {
-                    if (isFirstQueryEdge) {
-                        stringJoiner.add(String.format("(%s:%s)-[%s]->(%s:%s)", fromVertex,
-                            fromType, label, toVertex, toType));
-                        isFirstQueryEdge = false;
-                    } else {
-                        stringJoiner.add(String.format(", (%s:%s)-[%s]->(%s:%s)", fromVertex,
-                            fromType, label, toVertex, toType));
-                    }
-                }
-            }
-        }
-        return stringJoiner.toString();
+        var copy = new QueryGraph();
+        edges.forEach(edge -> copy.addEdge(edge.copy()));
+        return copy;
     }
 
     @Override
     public String toString() {
-        var stringJoiner = new StringJoiner("");
+        var strJoiner = new StringJoiner("");
         var isFirstQueryEdge = true;
         for (var fromVertex : vertexToEdgesMap.keySet()) {
+            var fromType = vertexToTypeMap.get(fromVertex);
             for (var toVertex : vertexToEdgesMap.get(fromVertex).keySet()) {
-                var queryEdge = vertexToEdgesMap.get(fromVertex).get(toVertex);
-                if (queryEdge.getFromVertex().equals(fromVertex)) {
+                var toType = vertexToTypeMap.get(toVertex);
+                var edge = vertexToEdgesMap.get(fromVertex).get(toVertex);
+                var label = edge.getLabel();
+                if (edge.getFromVertex().equals(fromVertex)) {
                     if (isFirstQueryEdge) {
-                        stringJoiner.add(String.format("(%s)->(%s)", fromVertex, toVertex));
+                        strJoiner.add(String.format("(%s:%s)-[%s]->(%s:%s)", fromVertex, fromType,
+                            label, toVertex, toType));
                         isFirstQueryEdge = false;
                     } else {
-                        stringJoiner.add(String.format(", (%s)->(%s)", fromVertex, toVertex));
+                        strJoiner.add(String.format(", (%s:%s)-[%s]->(%s:%s)", fromVertex, fromType,
+                            label, toVertex, toType));
                     }
                 }
+
             }
         }
-        return stringJoiner.toString();
+        return strJoiner.toString();
     }
 
     /**
      * An iterator over a set of possible mappings between two query graphs.
      */
     public class IsomorphismIterator implements Iterator<Map<String, String>>, Serializable {
+
         List<String> vertices;
         List<String> otherVertices;
         QueryGraph otherQueryGraph;
@@ -455,7 +394,7 @@ public class QueryGraph implements Serializable {
                                 continue Outer;
                             }
                             var prevOtherVertex = otherVertices.get(i);
-                            QueryEdge edge = getEdge(newVertexMapping, prevVertexMapping);
+                            var edge = getEdge(newVertexMapping, prevVertexMapping);
                             var otherEdge = otherQueryGraph.getEdge(otherVertex, prevOtherVertex);
                             if (edge == null && otherEdge == null) {
                                 continue;
@@ -466,11 +405,12 @@ public class QueryGraph implements Serializable {
                             if (otherEdge == null) { // edge != null
                                 continue;
                             }
-                            if (edge.getLabel() != otherEdge.getLabel()) {
+                            if (edge.getLabel() != otherEdge.getLabel() ||
+                                    edge.getVersion() != otherEdge.getVersion()) {
                                 continue Outer;
                             }
                             if (!((edge.getFromVertex().equals(prevVertexMapping) &&
-                                otherEdge.getFromVertex().equals(prevOtherVertex)) ||
+                                    otherEdge.getFromVertex().equals(prevOtherVertex)) ||
                                 (edge.getFromVertex().equals(newVertexMapping) &&
                                     otherEdge.getFromVertex().equals(otherVertex)))) {
                                 continue Outer;
@@ -478,7 +418,7 @@ public class QueryGraph implements Serializable {
                         }
                         currMapping.add(newVertexMapping);
                     } else if (otherVertexIdxMapping[nextIdx] >=
-                        possibleVertexMappings.get(nextIdx).size()) {
+                                    possibleVertexMappings.get(nextIdx).size()) {
                         currMapping.pop();
                         otherVertexIdxMapping[nextIdx] = 0;
                     }
