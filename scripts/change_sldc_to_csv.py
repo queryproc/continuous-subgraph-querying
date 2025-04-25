@@ -5,21 +5,20 @@ Large Network Dataset Collection, the script outputs for each file in the
 directory an edges '.csv' files. The CSV is later loaded to graphflow and saved
 to a directory in binary format.
 """
-import sys
 import argparse
 import random
-from os import listdir
-from os.path import isfile, join
 
 def main():
     args = parse_args()
+    random.seed(0) # use '0' to always get the same sequence of types
     highestVertexId = produce_edges_file(args.input_file,
         args.output_edges_file, args.separator, args.label)
     if args.output_vertices_file:
         produce_vertices_file(args.output_vertices_file, args.type, highestVertexId)
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='reads ')
+    parser = argparse.ArgumentParser(description='reads a .txt file from the SNAP '
+                                     'Collection and outputs a .csv file.')
     parser.add_argument('input_file',
         help='the raw input file using absolute path')
     parser.add_argument('output_edges_file',
@@ -38,7 +37,7 @@ def produce_edges_file(input_file, output_file, separator, num_of_labels):
     edges_file = open(output_file, 'w+')
     highestVertexId = -1
     # format file written as: FROM,TO,LABEL.
-    random.seed(0) # use '1' to always get the same sequence of labels  
+    random.seed(0) # always get the same sequence of labels  
     with open(input_file) as f:
         for line in f:
             if line[0] == '#': # read comment and remove, process the rest.
@@ -59,15 +58,13 @@ def produce_edges_file(input_file, output_file, separator, num_of_labels):
             if fromVertex == toVertex: # remove self-loops
                 continue
             edge_label = random.randint(0, num_of_labels - 1)
-            edges_file.write(fromVertex + ',' + toVertex + ',' + \
-                             str(edge_label) + '\n')
+            edges_file.write(fromVertex + ',' + toVertex + ',' + str(edge_label) + '\n')
     edges_file.close()
     return highestVertexId
 
 def produce_vertices_file(output_file, num_of_types, highestVertexId):
     vertices_file = open(output_file, 'w+')
     # format file written as: VERTEX_ID,TYPE.
-    random.seed(0) # use '0' to always get the same sequence of types
     for vertexId in range(0, highestVertexId + 1):
         vertex_type = random.randint(0, num_of_types - 1)
         vertices_file.write(str(vertexId) + ',' + str(vertex_type) + '\n')
@@ -75,4 +72,3 @@ def produce_vertices_file(output_file, num_of_types, highestVertexId):
 
 if __name__ == '__main__':
     main()
-

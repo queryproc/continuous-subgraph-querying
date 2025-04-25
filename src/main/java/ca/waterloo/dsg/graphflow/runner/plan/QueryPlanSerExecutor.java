@@ -58,8 +58,8 @@ public class QueryPlanSerExecutor extends AbstractRunner {
         var filename = cmdLine.getOptionValue(ArgsFactory.INPUT_FILE_EDGES);
         var reader = new BufferedReader(new FileReader(filename));
         var notifyDone = false;
-        while (true) {
-            for (var i = 0; i < Graph.EDGE_BATCH_SIZE; i ++) {
+        do {
+            for (var i = 0; i < Graph.EDGE_BATCH_SIZE; i++) {
                 var line = reader.readLine();
                 if (null == line) {
                     notifyDone = true;
@@ -73,11 +73,7 @@ public class QueryPlanSerExecutor extends AbstractRunner {
             }
             plan.execute();
             graph.finalizeChanges();
-            // System.gc();
-            if (notifyDone) {
-                break;
-            }
-        }
+        } while (!notifyDone);
         // initialize and execute the query and log the output.
         IOUtils.log(cmdLine.getOptionValue(ArgsFactory.OUTPUT_FILE), plan.getOutputLog());
     }

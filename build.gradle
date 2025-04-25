@@ -66,10 +66,6 @@ def scripts = [
         'catalog-serializer': 'ca.waterloo.dsg.graphflow.runner.dataset.CatalogSerializer',
         'query-plan-generator': 'ca.waterloo.dsg.graphflow.runner.plan.QueryPlansGenerator',
         'query-plan-executor': 'ca.waterloo.dsg.graphflow.runner.plan.QueryPlanSerExecutor',
-        'specific-query-plan-executor': 'ca.waterloo.dsg.graphflow.runner.plan.QueryPlanJsonExecutor',
-        'optimizer-executor': 'ca.waterloo.dsg.graphflow.runner.plan.OptimizerExecutor',
-        'log-selectivities': 'ca.waterloo.dsg.graphflow.runner.plan.LogSelectivities',
-        'log-selectivities-es': 'ca.waterloo.dsg.graphflow.runner.plan.LogSelectivitiesEstimated'
 ]
 
 scripts.each { fileName, className ->

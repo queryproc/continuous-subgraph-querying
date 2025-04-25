@@ -4,7 +4,6 @@ import glob
 import subprocess
 import argparse
 import shutil
-import random
 
 from types import *
 
@@ -20,20 +19,9 @@ def main():
     if os.path.isdir(plan_ser_dir):
         shutil.rmtree(plan_ser_dir)
     generate_and_serialize_query_plans(args, plan_ser_dir)
-    output = args.input_graph.split('/')
-    queries_file = args.queries.split('/')
-    queries_file = queries_file[len(queries_file) - 1]
-    output_dir = '/'.join(output[:len(output) - 1]) + '/logs/'
-    output = output_dir + args.optimizer_type + "_" + queries_file + '_output'
-    if args.sharing_operators_enabled:
-        output += '_shared_ops'
-    if args.sharing_ALDs_enabled:
-        output += '_alds'
-    if not os.path.exists(output_dir):
-        os.mkdir(output_dir)
-    if not os.path.exists(output):
-        with open(output,'w') as f:
-            f.write('#Runtime(ms),NumOutTuples,NumOperators,ICost,EstimatedICost,NumInterTuples\n')
+    output = args.log_file
+    with open(output,'w') as f:
+        f.write('#Runtime(ms),NumOutTuples,NumOperators,ICost,EstimatedICost,NumInterTuples\n')
     num_plans_possible = len(glob.glob(plan_ser_dir + '*'))
     print('num plans possible: ' + str(num_plans_possible))
     if num_plans_possible > args.top:
@@ -44,7 +32,7 @@ def main():
             execute_query_plans(args, plan_ser_dir + 'ser_plan_' + str(i), output)
         if args.runs > 1 and args.optimizer_type != 'ALL':
             write_output_avg(output, output + '_avg', args.runs)
-    #shutil.rmtree(plan_ser_dir)
+    extract_run_times(output)
 
 def generate_and_serialize_query_plans(args, plan_ser_dir):
     query_plan_gen_ser_args = [
@@ -89,27 +77,55 @@ def write_output_avg(output, output_avg, runs):
         run_time_avg /= runs
         f_avg.write(str(run_time_avg))
 
+def extract_run_times(file_path):
+    run_times = []
+    run_times_and_line = []
+    num_out_tuples = []
+    with open(file_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            # skip blank lines or comments
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split(',')
+            if len(parts) < 2:
+                continue  # malformed line
+            rt = parts[0]
+            nt = parts[1]
+            run_times.append(rt)
+            run_times_and_line.append((rt, line))
+            num_out_tuples.append(nt)
+    print("Run times (ms): ", sorted(run_times))
+
+    # Validate NumOutTuples consistency
+    unique_counts = set(num_out_tuples)
+    if len(unique_counts) == 1:
+        print(f"Num output tuples: {unique_counts.pop()}")
+    else:
+        print(f"Error: Inconsistent NumOutTuples values found: {unique_counts}")
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='runs all unique query plans given query graphs.')
     parser.add_argument('queries',
         help='queries to evaluate.')
     parser.add_argument('input_graph',
-        help='aboluste path to the serialized input graph directory.')
+        help='absolute path to the serialized input graph directory.')
     parser.add_argument('input_edges',
-        help='aboluste path to the batched input edges directory.')
+        help='absolute path to the batched input edges directory.')
+    parser.add_argument('log_file',
+        help='absolute path to the output file.')
     parser.add_argument('-o', '--optimizer_type', choices=['ALL', 'BS', 'BNS', 'GR'],
         help='type of optimizer to run.', default='ALL')
     parser.add_argument('-s', '--sharing_operators_enabled',
-        help='option if the query plans should share operators.', action='store_true')
+        help='option if the query plans should share operators.', action='store_false')
     parser.add_argument('-a', '--sharing_ALDs_enabled',
-        help='option if the query plans should share ALDs.', action='store_true')
+        help='option if the query plans should share ALDs.', action='store_false')
     parser.add_argument('-t', '--top',
-        help='number of top plans to execute.', type=int, default=1000)
+        help='number of top plans to execute.', type=int, default=1)
     parser.add_argument('-r', '--runs',
         help='number of runs.', type=int, default=1)
     return parser.parse_args()
 
 if __name__ == '__main__':
     main()
-
